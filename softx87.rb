@@ -1,8 +1,8 @@
 require 'ffi'
 
-module Softx86
+module Softx87
   extend FFI::Library
-  ffi_lib "lib/libsoftx86.so"
+  ffi_lib "lib/libsoftx87.so"
 
   SOFTX86_VERSION_HI = 0
   SOFTX86_VERSION_LO = 0
@@ -29,7 +29,7 @@ module Softx86
            :w, Softx86RegvalW
     )
   end
-  class Softx86Segregval < FFI::Struct
+   class Softx86Segregval < FFI::Struct
     layout(
            :val, :ushort,
            :cached_linear, :uint
@@ -213,48 +213,6 @@ module Softx86
   SX86_CPULEVEL_8086 = 1
   SX86_CPULEVEL_80186 = 2
   SX86_CPULEVEL_80286 = 3
-  attach_function :sx86_exec_full_modregrm_rw, [ :pointer, :uchar, :uchar, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar, :uchar ], sx86), callback([ :pointer, :ushort, :ushort ], sx86), callback([ :pointer, :uint, :uint ], sx86) ], :void
-  attach_function :sx86_exec_full_modregrm_ro, [ :pointer, :uchar, :uchar, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar, :uchar ], sx86), callback([ :pointer, :ushort, :ushort ], sx86), callback([ :pointer, :uint, :uint ], sx86) ], :void
-  attach_function :sx86_exec_full_modsregrm_rw, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :ushort, :ushort ], sx86) ], :void
-  attach_function :sx86_exec_full_modrmonly_rw, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar ], sx86), callback([ :pointer, :ushort ], sx86), callback([ :pointer, :uint ], sx86) ], :void
-  attach_function :sx86_exec_full_modrmonly_rw_imm, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar, :uchar ], sx86), callback([ :pointer, :ushort, :ushort ], sx86), callback([ :pointer, :uint, :uint ], sx86) ], :void
-  attach_function :sx86_exec_full_modrmonly_rw_imm8, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar, :uchar ], sx86), callback([ :pointer, :ushort, :ushort ], sx86), callback([ :pointer, :uint, :uint ], sx86) ], :void
-  attach_function :sx86_exec_full_modrmonly_ro_imm, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar, :uchar ], sx86), callback([ :pointer, :ushort, :ushort ], sx86), callback([ :pointer, :uint, :uint ], sx86) ], :void
-  attach_function :sx86_exec_full_modregrm_xchg, [ :pointer, :uchar, :uchar, :uchar, :uchar, :uchar ], :void
-  attach_function :sx86_exec_full_modregrm_lea, [ :pointer, :uchar, :uchar, :uchar, :uchar ], :void
-  attach_function :sx86_exec_full_modrmonly_memx, [ :pointer, :uchar, :uchar, :int, callback([ :pointer, :string, :int ], :void) ], :void
-  attach_function :sx86_exec_full_modrmonly_callfar, [ :pointer, :uchar, :uchar, :uchar, callback([ :pointer, :ushort, :ushort ], :void), callback([ :pointer, :uint, :uint ], :void) ], :void
-  attach_function :sx86_exec_full_modrmonly_ro, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar ], sx86), callback([ :pointer, :ushort ], sx86), callback([ :pointer, :uint ], sx86) ], :void
-  attach_function :sx86_exec_full_modrmonly_wo, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer ], sx86), callback([ :pointer ], sx86), callback([ :pointer ], sx86) ], :void
-  attach_function :sx86_exec_full_modregrm_far, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :ushort, :ushort ], sx86), callback([ :pointer, :uint, :uint ], sx86) ], :void
-  attach_function :sx86_exec_full_modregrm_far_ro3, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :short, :short, :short ], sx86), callback([ :pointer, :int, :int, :int ], sx86) ], :void
-  attach_function :sx86_dec_full_modrmonly, [ :pointer, :uchar, :uchar, :uchar, :uchar, :string ], :void
-  attach_function :sx86_dec_full_modregrm, [ :pointer, :uchar, :uchar, :uchar, :uchar, :uchar, :string, :string ], :void
-  attach_function :sx86_dec_full_modsregrm, [ :pointer, :uchar, :uchar, :uchar, :string, :string ], :void
-  attach_function :softx86_bswap2, [ :pointer ], :void
-  attach_function :softx86_bswap4, [ :pointer ], :void
-  attach_function :softx86_getversion, [ :pointer, :pointer, :pointer ], :int
-  attach_function :softx86_init, [ :pointer, :int ], :int
-  attach_function :softx86_reset, [ :pointer ], :int
-  attach_function :softx86_free, [ :pointer ], :int
-  attach_function :softx86_step, [ :pointer ], :int
-  attach_function :softx86_decompile, [ :pointer, [:char, 256] ], :int
-  attach_function :softx86_decompile_exec_cs_ip, [ :pointer ], :int
-  attach_function :softx86_stack_popw, [ :pointer ], :ushort
-  attach_function :softx86_stack_discard_n, [ :pointer, :int ], :void
-  attach_function :softx86_stack_add_n, [ :pointer, :int ], :void
-  attach_function :softx86_stack_pushw, [ :pointer, :ushort ], :void
-  attach_function :softx86_fetch, [ :pointer, :pointer, :uint, :pointer, :int ], :int
-  attach_function :softx86_write, [ :pointer, :pointer, :uint, :pointer, :int ], :int
-  attach_function :softx86_fetch_exec_byte, [ :pointer ], :uchar
-  attach_function :softx86_fetch_dec_byte, [ :pointer ], :uchar
-  attach_function :softx86_setsegval, [ :pointer, :int, :uint ], :int
-  attach_function :softx86_set_instruction_ptr, [ :pointer, :uint, :uint ], :int
-  attach_function :softx86_set_instruction_dec_ptr, [ :pointer, :uint, :uint ], :int
-  attach_function :softx86_set_stack_ptr, [ :pointer, :uint, :uint ], :int
-  attach_function :softx86_set_near_instruction_ptr, [ :pointer, :uint ], :int
-  attach_function :softx86_get_intvect, [ :pointer, :uchar, :pointer, :pointer ], :int
-  attach_function :softx86_go_int_frame, [ :pointer, :uchar ], :void
   SX86_CPUFLAG_CARRY = 0x00000001
   SX86_CPUFLAG_RESERVED_01 = 0x00000002
   SX86_CPUFLAG_PARITY = 0x00000004
@@ -317,30 +275,169 @@ module Softx86
   SX86_CPUFLAGBO_RESERVED_29 = 29
   SX86_CPUFLAGBO_RESERVED_30 = 30
   SX86_CPUFLAGBO_RESERVED_31 = 31
-  attach_function :softx86_step_def_on_read_memory, [ :pointer, :uint, :pointer, :int ], :void
-  attach_function :softx86_step_def_on_read_io, [ :pointer, :uint, :pointer, :int ], :void
-  attach_function :softx86_step_def_on_write_memory, [ :pointer, :uint, :pointer, :int ], :void
-  attach_function :softx86_step_def_on_write_io, [ :pointer, :uint, :pointer, :int ], :void
-  attach_function :softx86_step_def_on_hw_int, [ :pointer, :uchar ], :void
-  attach_function :softx86_step_def_on_sw_int, [ :pointer, :uchar ], :void
-  attach_function :softx86_step_def_on_hw_int_ack, [ :pointer, :uchar ], :void
-  attach_function :softx86_step_def_on_idle_cycle, [ :pointer ], :void
-  attach_function :softx86_step_def_on_nmi_int, [ :pointer ], :void
-  attach_function :softx86_step_def_on_nmi_int_ack, [ :pointer ], :void
-  attach_function :softx86_step_def_on_fpu_opcode_exec, [ :pointer, :pointer, :uchar ], :int
-  attach_function :softx86_step_def_on_fpu_opcode_dec, [ :pointer, :pointer, :uchar, [:char, 128] ], :int
-  attach_function :softx86_step_def_on_reset, [ :pointer ], :void
-  attach_function :softx86_ext_hw_signal, [ :pointer, :uchar ], :int
-  attach_function :softx86_ext_hw_ack, [ :pointer ], :int
-  attach_function :softx86_int_sw_signal, [ :pointer, :uchar ], :int
-  attach_function :softx86_ext_hw_nmi_signal, [ :pointer ], :int
-  attach_function :softx86_ext_hw_nmi_ack, [ :pointer ], :int
-  attach_function :softx86_parity8, [ :uchar ], :int
-  attach_function :softx86_parity16, [ :ushort ], :int
-  attach_function :softx86_parity32, [ :uint ], :int
-  attach_function :softx86_parity64, [ :ulong_long ], :int
-  SX86_BUG_PREEMPTIBLE_AFTER_PREFIX = 0x12340500
-  SX86_BUG_SP_DECREMENT_BEFORE_STORE = 0x12340600
-  SX86_BUG_5BIT_SHIFTMASK = 0x12340700
-  attach_function :softx86_setbug, [ :pointer, :uint, :uchar ], :int
+
+  SOFTX87_VERSION_HI = 0
+  SOFTX87_VERSION_LO = 0
+  SOFTX87_VERSION_SUBLO = 29
+  class Softx87Reg80 < FFI::Struct
+    layout(
+           :mantissa, :ulong_long,
+           :exponent, :ushort,
+           :sign_bit, :uchar
+    )
+  end
+  class Softx87Ptr < FFI::Struct
+    layout(
+           :offset, :uint,
+           :segment, :ushort
+    )
+  end
+  class Softx87Fpustate < FFI::Struct
+    layout(
+           :status_word, :ushort,
+           :control_word, :ushort,
+           :tag_word, :ushort,
+           :data_pointer, Softx87Ptr,
+           :last_instruction, Softx87Ptr,
+           :last_instruction_memptr, Softx87Ptr,
+           :last_opcode, :ushort,
+           :st, [Softx87Reg80, 8]
+    )
+  end
+  class Softx87Callbacks < FFI::Struct
+    layout(
+           :on_read_memory, callback([ :pointer, :uint, :pointer, :int ], :void),
+           :on_write_memory, callback([ :pointer, :uint, :pointer, :int ], :void),
+           :on_softx86_fetch_exec_byte, callback([ :pointer ], sx86),
+           :on_softx86_fetch_dec_byte, callback([ :pointer ], sx86),
+           :on_sx86_exec_full_modrmonly_memx, callback([ :pointer, :uchar, :uchar, :int, callback([ :pointer, :string, :int ], :void) ], :void),
+           :on_sx86_dec_full_modrmonly, callback([ :pointer, :uchar, :uchar, :uchar, :uchar, :string ], :void)
+    )
+    def on_read_memory=(cb)
+      @on_read_memory = cb
+      self[:on_read_memory] = @on_read_memory
+    end
+    def on_read_memory
+      @on_read_memory
+    end
+    def on_write_memory=(cb)
+      @on_write_memory = cb
+      self[:on_write_memory] = @on_write_memory
+    end
+    def on_write_memory
+      @on_write_memory
+    end
+    def on_softx86_fetch_exec_byte=(cb)
+      @on_softx86_fetch_exec_byte = cb
+      self[:on_softx86_fetch_exec_byte] = @on_softx86_fetch_exec_byte
+    end
+    def on_softx86_fetch_exec_byte
+      @on_softx86_fetch_exec_byte
+    end
+    def on_softx86_fetch_dec_byte=(cb)
+      @on_softx86_fetch_dec_byte = cb
+      self[:on_softx86_fetch_dec_byte] = @on_softx86_fetch_dec_byte
+    end
+    def on_softx86_fetch_dec_byte
+      @on_softx86_fetch_dec_byte
+    end
+    def on_sx86_exec_full_modrmonly_memx=(cb)
+      @on_sx86_exec_full_modrmonly_memx = cb
+      self[:on_sx86_exec_full_modrmonly_memx] = @on_sx86_exec_full_modrmonly_memx
+    end
+    def on_sx86_exec_full_modrmonly_memx
+      @on_sx86_exec_full_modrmonly_memx
+    end
+    def on_sx86_dec_full_modrmonly=(cb)
+      @on_sx86_dec_full_modrmonly = cb
+      self[:on_sx86_dec_full_modrmonly] = @on_sx86_dec_full_modrmonly
+    end
+    def on_sx86_dec_full_modrmonly
+      @on_sx86_dec_full_modrmonly
+    end
+
+  end
+  class Softx87Bugs < FFI::Struct
+    layout(
+           :ip_ignores_prefix, :uchar
+    )
+  end
+  class Softx87Ctx < FFI::Struct
+    layout(
+           :version_hi, :uchar,
+           :version_lo, :uchar,
+           :version_sublo, :ushort,
+           :state, Softx87Fpustate,
+           :callbacks, Softx87Callbacks,
+           :bugs, Softx87Bugs,
+           :opcode_table, :pointer,
+           :level, :int,
+           :ref_softx86, :pointer
+    )
+  end
+  SX87_FPULEVEL_8087 = 0
+  SX87_FPULEVEL_80287 = 1
+  SX87_FPULEVEL_80387 = 2
+  SX87_FPULEVEL_80487 = 3
+  SX87_FPU_NUMTYPE_NUMBER = 0
+  SX87_FPU_NUMTYPE_NEGINF = 1
+  SX87_FPU_NUMTYPE_POSINF = 2
+  SX87_FPU_NUMTYPE_NAN = 3
+  attach_function :softx87_getversion, [ :pointer, :pointer, :pointer ], :int
+  attach_function :softx87_init, [ :pointer, :int ], :int
+  attach_function :softx87_reset, [ :pointer ], :int
+  attach_function :softx87_free, [ :pointer ], :int
+  attach_function :softx87_get_fpu_register_double, [ :pointer, :int, :pointer ], :double
+  attach_function :softx87_set_fpu_register_double, [ :pointer, :int, :double ], :void
+  attach_function :softx87_finit_setup, [ :pointer ], :void
+  attach_function :softx87_on_fpu_opcode_exec, [ :pointer, :pointer, :uchar ], :int
+  attach_function :softx87_on_fpu_opcode_dec, [ :pointer, :pointer, :uchar, [:char, 128] ], :int
+  SX87_FPUSTAT_INVALID_OP = 0x0001
+  SX87_FPUSTAT_DENORMAL = 0x0002
+  SX87_FPUSTAT_ZERO_DIVIDE = 0x0004
+  SX87_FPUSTAT_OVERFLOW = 0x0008
+  SX87_FPUSTAT_UNDERFLOW = 0x0010
+  SX87_FPUSTAT_PRECISION = 0x0020
+  SX87_FPUSTAT_STACK_FAULT = 0x0040
+  SX87_FPUSTAT_ERROR_SUMMARY = 0x0080
+  SX87_FPUSTAT_C0 = 0x0100
+  SX87_FPUSTAT_C1 = 0x0200
+  SX87_FPUSTAT_C2 = 0x0400
+  SX87_FPUSTAT_TOP_MASK = 0x3800
+  SX87_FPUSTAT_C3 = 0x4000
+  SX87_FPUSTAT_BUSY = 0x8000
+  SX87_FPUCTRLW_INVALID_OP = 0x0001
+  SX87_FPUCTRLW_DENORMAL = 0x0002
+  SX87_FPUCTRLW_ZERO_DIVIDE = 0x0004
+  SX87_FPUCTRLW_OVERFLOW = 0x0008
+  SX87_FPUCTRLW_UNDERFLOW = 0x0010
+  SX87_FPUCTRLW_PRECISION = 0x0020
+  SX87_FPUCTRLW_PCTL_MASK = 0x0300
+  SX87_FPUCTRLW_RNDCTL_MASK = 0x0C00
+  SX87_FPUCTRLW_INFCTL = 0x1000
+  SX87_FPUCTRLW_PCTL_24_BIT = 0
+  SX87_FPUCTRLW_PCTL_RESERVED_1 = 1
+  SX87_FPUCTRLW_PCTL_53_BIT = 2
+  SX87_FPUCTRLW_PCTL_64_BIT = 3
+  SX87_FPUCTRLW_RNDCTL_NEAREST = 0
+  SX87_FPUCTRLW_RNDCTL_DOWNINF = 1
+  SX87_FPUCTRLW_RNDCTL_UPINF = 2
+  SX87_FPUCTRLW_RNDCTL_ZERO = 3
+  SX87_FPUTAGVAL_VALID = 0
+  SX87_FPUTAGVAL_ZERO = 1
+  SX87_FPUTAGVAL_SPECIAL = 2
+  SX87_FPUTAGVAL_EMPTY = 3
+  attach_function :softx87_step_def_on_read_memory, [ :pointer, :uint, :pointer, :int ], :void
+  attach_function :softx87_step_def_on_write_memory, [ :pointer, :uint, :pointer, :int ], :void
+  attach_function :softx87_def_on_softx86_fetch_exec_byte, [ :pointer ], :uchar
+  attach_function :softx87_def_on_softx86_fetch_dec_byte, [ :pointer ], :uchar
+  attach_function :softx87_on_sx86_exec_full_modrmonly_memx, [ :pointer, :uchar, :uchar, :int, callback([ :pointer, :string, :int ], :void) ], :void
+  attach_function :softx87_on_sx86_dec_full_modrmonly, [ :pointer, :uchar, :uchar, :uchar, :uchar, :string ], :void
+  SX87_BUG_IP_IGNORES_PREFIX = 0x56780100
+  attach_function :softx87_setbug, [ :pointer, :uint, :uchar ], :int
+  attach_function :softx87_normalize, [ :pointer, :pointer ], :void
+  attach_function :softx87_unpack_raw_int16, [ :pointer, :pointer, :pointer ], :void
+  attach_function :softx87_unpack_raw_int32, [ :pointer, :pointer, :pointer ], :void
+  attach_function :softx87_unpack_raw_fp32, [ :pointer, :pointer, :pointer ], :void
+  attach_function :softx87_unpack_raw_fp64, [ :pointer, :pointer, :pointer ], :void
 end

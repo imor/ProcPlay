@@ -118,7 +118,6 @@ if (!Module['arguments']) {
 // *** Environment setup code ***
 
   
-// Warning: .ll contains i64 or double values. These 64-bit values are dangerous in USE_TYPED_ARRAYS == 2. We store i64 as i32, and double as float. This can cause serious problems!
 // === Auto-generated preamble library stuff ===
 
 //========================================
@@ -322,8 +321,8 @@ var Runtime = {
     }
     return ret;
   },
-  stackAlloc: function stackAlloc(size) { var ret = STACKTOP;STACKTOP += size;STACKTOP = ((((STACKTOP)+3)>>2)<<2);assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"); return ret; },
-  staticAlloc: function staticAlloc(size) { var ret = STATICTOP;STATICTOP += size;STATICTOP = ((((STATICTOP)+3)>>2)<<2); if (STATICTOP >= TOTAL_MEMORY) enlargeMemory();; return ret; },
+  stackAlloc: function stackAlloc(size) { var ret = STACKTOP;STACKTOP += size;assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"); return ret; },
+  staticAlloc: function staticAlloc(size) { var ret = STATICTOP;STATICTOP += size;STATICTOP = ((((STATICTOP)+3)>>2)<<2); return ret; },
   alignMemory: function alignMemory(size,quantum) { var ret = size = Math.ceil((size)/(quantum ? quantum : 4))*(quantum ? quantum : 4); return ret; },
   makeBigInt: function makeBigInt(low,high,unsigned) { var ret = (unsigned ? (((low)>>>0)+(((high)>>>0)*4294967296)) : (((low)>>>0)+(((high)|0)*4294967296))); return ret; },
   QUANTUM_SIZE: 4,
@@ -364,7 +363,6 @@ var undef = 0;
 // tempInt is used for 32-bit signed values or smaller. tempBigInt is used
 // for 32-bit unsigned values or more than 32 bits. TODO: audit all uses of tempInt
 var tempValue, tempInt, tempBigInt, tempInt2, tempBigInt2, tempPair, tempBigIntI, tempBigIntR, tempBigIntS, tempBigIntP, tempBigIntD;
-var tempI64, tempI64b;
 
 function abort(text) {
   Module.print(text + ':\n' + (new Error).stack);
@@ -464,13 +462,13 @@ function setValue(ptr, value, type, noSafe) {
   type = type || 'i8';
   if (type[type.length-1] === '*') type = 'i32'; // pointers are 32-bit
     switch(type) {
-      case 'i1': HEAP8[(ptr)]=value; break;
-      case 'i8': HEAP8[(ptr)]=value; break;
-      case 'i16': HEAP16[((ptr)>>1)]=value; break;
-      case 'i32': HEAP32[((ptr)>>2)]=value; break;
-      case 'i64': HEAP32[((ptr)>>2)]=value; break;
-      case 'float': HEAPF32[((ptr)>>2)]=value; break;
-      case 'double': (tempDoubleF64[0]=value,HEAP32[((ptr)>>2)]=tempDoubleI32[0],HEAP32[((ptr+4)>>2)]=tempDoubleI32[1]); break;
+      case 'i1': HEAP[ptr]=value; break;
+      case 'i8': HEAP[ptr]=value; break;
+      case 'i16': HEAP[ptr]=value; break;
+      case 'i32': HEAP[ptr]=value; break;
+      case 'i64': HEAP[ptr]=value; break;
+      case 'float': HEAP[ptr]=value; break;
+      case 'double': HEAP[ptr]=value; break;
       default: abort('invalid type for setValue: ' + type);
     }
 }
@@ -481,13 +479,13 @@ function getValue(ptr, type, noSafe) {
   type = type || 'i8';
   if (type[type.length-1] === '*') type = 'i32'; // pointers are 32-bit
     switch(type) {
-      case 'i1': return HEAP8[(ptr)];
-      case 'i8': return HEAP8[(ptr)];
-      case 'i16': return HEAP16[((ptr)>>1)];
-      case 'i32': return HEAP32[((ptr)>>2)];
-      case 'i64': return HEAP32[((ptr)>>2)];
-      case 'float': return HEAPF32[((ptr)>>2)];
-      case 'double': return (tempDoubleI32[0]=HEAP32[((ptr)>>2)],tempDoubleI32[1]=HEAP32[((ptr+4)>>2)],tempDoubleF64[0]);
+      case 'i1': return HEAP[ptr];
+      case 'i8': return HEAP[ptr];
+      case 'i16': return HEAP[ptr];
+      case 'i32': return HEAP[ptr];
+      case 'i64': return HEAP[ptr];
+      case 'float': return HEAP[ptr];
+      case 'double': return HEAP[ptr];
       default: abort('invalid type for setValue: ' + type);
     }
   return null;
@@ -537,7 +535,6 @@ function allocate(slab, types, allocator) {
     }
     assert(type, 'Must know what type to store in allocate!');
 
-    if (type == 'i64') type = 'i32'; // special case: we have one i32 here, and one i32 later
 
     setValue(ret+i, curr, type);
     i += Runtime.getNativeTypeSize(type);
@@ -554,7 +551,7 @@ function Pointer_stringify(ptr, /* optional */ length) {
   var t;
   var nullByte = String.fromCharCode(0);
   while (1) {
-    t = String.fromCharCode(HEAPU8[(ptr+i)]);
+    t = String.fromCharCode(HEAP[ptr+i]);
     if (nullTerminated && t == nullByte) { break; } else {}
     ret += t;
     i += 1;
@@ -584,96 +581,33 @@ function alignMemoryPage(x) {
 }
 
 var HEAP;
-var HEAP8, HEAPU8, HEAP16, HEAPU16, HEAP32, HEAPU32, HEAPF32, HEAPF64;
 
 var STACK_ROOT, STACKTOP, STACK_MAX;
 var STATICTOP;
-function enlargeMemory() {
-  // TOTAL_MEMORY is the current size of the actual array, and STATICTOP is the new top.
-  Module.printErr('Warning: Enlarging memory arrays, this is not fast! ' + [STATICTOP, TOTAL_MEMORY]);
-  assert(STATICTOP >= TOTAL_MEMORY);
-  assert(TOTAL_MEMORY > 4); // So the loop below will not be infinite
-  while (TOTAL_MEMORY <= STATICTOP) { // Simple heuristic. Override enlargeMemory() if your program has something more optimal for it
-    TOTAL_MEMORY = alignMemoryPage(2*TOTAL_MEMORY);
-  }
-  var oldHEAP8 = HEAP8;
-  var buffer = new ArrayBuffer(TOTAL_MEMORY);
-  HEAP8 = new Int8Array(buffer);
-  HEAP16 = new Int16Array(buffer);
-  HEAP32 = new Int32Array(buffer);
-  HEAPU8 = new Uint8Array(buffer);
-  HEAPU16 = new Uint16Array(buffer);
-  HEAPU32 = new Uint32Array(buffer);
-  HEAPF32 = new Float32Array(buffer);
-  HEAPF64 = new Float64Array(buffer);
-  HEAP8.set(oldHEAP8);
-}
 
 var TOTAL_STACK = Module['TOTAL_STACK'] || 5242880;
 var TOTAL_MEMORY = Module['TOTAL_MEMORY'] || 10485760;
 var FAST_MEMORY = Module['FAST_MEMORY'] || 2097152;
 
 // Initialize the runtime's memory
-// check for full engine support (use string 'subarray' to avoid closure compiler confusion)
-  assert(!!Int32Array && !!Float64Array && !!(new Int32Array(1)['subarray']) && !!(new Int32Array(1)['set']),
-         'Cannot fallback to non-typed array case: Code is too specialized');
-
-  var buffer = new ArrayBuffer(TOTAL_MEMORY);
-  HEAP8 = new Int8Array(buffer);
-  HEAP16 = new Int16Array(buffer);
-  HEAP32 = new Int32Array(buffer);
-  HEAPU8 = new Uint8Array(buffer);
-  HEAPU16 = new Uint16Array(buffer);
-  HEAPU32 = new Uint32Array(buffer);
-  HEAPF32 = new Float32Array(buffer);
-  HEAPF64 = new Float64Array(buffer);
-
-  // Endianness check (note: assumes compiler arch was little-endian)
-  HEAP32[0] = 255;
-  assert(HEAPU8[0] === 255 && HEAPU8[3] === 0, 'Typed arrays 2 must be run on a little-endian system');
+  // Make sure that our HEAP is implemented as a flat array.
+  HEAP = []; // Hinting at the size with |new Array(TOTAL_MEMORY)| should help in theory but makes v8 much slower
+  for (var i = 0; i < FAST_MEMORY; i++) {
+    HEAP[i] = 0; // XXX We do *not* use {{| makeSetValue(0, 'i', 0, 'null') |}} here, since this is done just to optimize runtime speed
+  }
 
 var base = intArrayFromString('(null)'); // So printing %s of NULL gives '(null)'
                                          // Also this ensures we leave 0 as an invalid address, 'NULL'
 STATICTOP = base.length;
 for (var i = 0; i < base.length; i++) {
-  HEAP8[(i)]=base[i]
+  HEAP[i]=base[i]
 }
 
 Module['HEAP'] = HEAP;
-Module['HEAP8'] = HEAP8;
-Module['HEAP16'] = HEAP16;
-Module['HEAP32'] = HEAP32;
-Module['HEAPU8'] = HEAPU8;
-Module['HEAPU16'] = HEAPU16;
-Module['HEAPU32'] = HEAPU32;
-Module['HEAPF32'] = HEAPF32;
-Module['HEAPF64'] = HEAPF64;
 
 STACK_ROOT = STACKTOP = Runtime.alignMemory(STATICTOP);
 STACK_MAX = STACK_ROOT + TOTAL_STACK;
 
-var tempDoublePtr = Runtime.alignMemory(STACK_MAX, 8);
-var tempDoubleI8  = HEAP8.subarray(tempDoublePtr);
-var tempDoubleI32 = HEAP32.subarray(tempDoublePtr >> 2);
-var tempDoubleF32 = HEAPF32.subarray(tempDoublePtr >> 2);
-var tempDoubleF64 = HEAPF64.subarray(tempDoublePtr >> 3);
-function copyTempFloat(ptr) { // functions, because inlining this code is increases code size too much
-  tempDoubleI8[0] = HEAP8[ptr];
-  tempDoubleI8[1] = HEAP8[ptr+1];
-  tempDoubleI8[2] = HEAP8[ptr+2];
-  tempDoubleI8[3] = HEAP8[ptr+3];
-}
-function copyTempDouble(ptr) {
-  tempDoubleI8[0] = HEAP8[ptr];
-  tempDoubleI8[1] = HEAP8[ptr+1];
-  tempDoubleI8[2] = HEAP8[ptr+2];
-  tempDoubleI8[3] = HEAP8[ptr+3];
-  tempDoubleI8[4] = HEAP8[ptr+4];
-  tempDoubleI8[5] = HEAP8[ptr+5];
-  tempDoubleI8[6] = HEAP8[ptr+6];
-  tempDoubleI8[7] = HEAP8[ptr+7];
-}
-STACK_MAX = tempDoublePtr + 8;
 
 STATICTOP = alignMemoryPage(STACK_MAX);
 
@@ -706,27 +640,14 @@ function exitRuntime() {
 // Copies a list of num items on the HEAP into a
 // a normal JavaScript array of numbers
 function Array_copy(ptr, num) {
-  return Array.prototype.slice.call(HEAP8.subarray(ptr, ptr+num)); // Make a normal array out of the typed 'view'
-                                                                   // Consider making a typed array here, for speed?
   return HEAP.slice(ptr, ptr+num);
 }
 Module['Array_copy'] = Array_copy;
 
-// Copies a list of num items on the HEAP into a
-// JavaScript typed array.
-function TypedArray_copy(ptr, num) {
-  // TODO: optimize this!
-  var arr = new Uint8Array(num);
-  for (var i = 0; i < num; ++i) {
-    arr[i] = HEAP8[(ptr+i)];
-  }
-  return arr.buffer;
-}
-Module['TypedArray_copy'] = TypedArray_copy;
 
 function String_len(ptr) {
   var i = 0;
-  while (HEAP8[(ptr+i)]) i++; // Note: should be |!= 0|, technically. But this helps catch bugs with undefineds
+  while (HEAP[ptr+i]) i++; // Note: should be |!= 0|, technically. But this helps catch bugs with undefineds
   return i;
 }
 Module['String_len'] = String_len;
@@ -789,11 +710,11 @@ function writeStringToMemory(string, buffer, dontAddNull) {
         assert(false, 'Character code ' + chr + ' (' + string[i] + ')  at offset ' + i + ' not in 0x00-0xFF.');
       chr &= 0xFF;
     }
-    HEAP8[(buffer+i)]=chr
+    HEAP[buffer+i]=chr
     i = i + 1;
   }
   if (!dontAddNull) {
-    HEAP8[(buffer+i)]=0
+    HEAP[buffer+i]=0
   }
 }
 Module['writeStringToMemory'] = writeStringToMemory;
@@ -886,7 +807,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $11=(($10)|0);
       var $12=$11;
       var $13=(($12)|0);
-      var $14=HEAP8[($13)];
+      var $14=HEAP[$13];
       $al=$14;
       var $15=$al;
       var $16=(($15)&255);
@@ -898,7 +819,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $21=(($20+4)|0);
       var $22=(($21+96)|0);
       var $23=$22;
-      var $24=HEAP32[(($23)>>2)];
+      var $24=HEAP[$23];
       var $25=$24 & 16;
       var $26=(($25)|0)!=0;
       if ($26) { __label__ = 4; break; } else { __label__ = 7; break; }
@@ -923,27 +844,27 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $42=(($41+4)|0);
       var $43=(($42+96)|0);
       var $44=$43;
-      var $45=HEAP32[(($44)>>2)];
+      var $45=HEAP[$44];
       var $46=$45 | 1;
-      HEAP32[(($44)>>2)]=$46;
+      HEAP[$44]=$46;
       __label__ = 6; break;
     case 6: 
       var $48=$3;
       var $49=(($48+4)|0);
       var $50=(($49+96)|0);
       var $51=$50;
-      var $52=HEAP32[(($51)>>2)];
+      var $52=HEAP[$51];
       var $53=$52 | 16;
-      HEAP32[(($51)>>2)]=$53;
+      HEAP[$51]=$53;
       __label__ = 8; break;
     case 7: 
       var $55=$3;
       var $56=(($55+4)|0);
       var $57=(($56+96)|0);
       var $58=$57;
-      var $59=HEAP32[(($58)>>2)];
+      var $59=HEAP[$58];
       var $60=$59 & -17;
-      HEAP32[(($58)>>2)]=$60;
+      HEAP[$58]=$60;
       __label__ = 8; break;
     case 8: 
       var $62=$al;
@@ -956,7 +877,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $68=(($67+4)|0);
       var $69=(($68+96)|0);
       var $70=$69;
-      var $71=HEAP32[(($70)>>2)];
+      var $71=HEAP[$70];
       var $72=$71 & 1;
       var $73=(($72)|0)!=0;
       if ($73) { __label__ = 10; break; } else { __label__ = 11; break; }
@@ -970,27 +891,27 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $80=(($79+4)|0);
       var $81=(($80+96)|0);
       var $82=$81;
-      var $83=HEAP32[(($82)>>2)];
+      var $83=HEAP[$82];
       var $84=$83 | 1;
-      HEAP32[(($82)>>2)]=$84;
+      HEAP[$82]=$84;
       __label__ = 12; break;
     case 11: 
       var $86=$3;
       var $87=(($86+4)|0);
       var $88=(($87+96)|0);
       var $89=$88;
-      var $90=HEAP32[(($89)>>2)];
+      var $90=HEAP[$89];
       var $91=$90 & -2;
-      HEAP32[(($89)>>2)]=$91;
+      HEAP[$89]=$91;
       __label__ = 12; break;
     case 12: 
       var $93=$3;
       var $94=(($93+4)|0);
       var $95=(($94+96)|0);
       var $96=$95;
-      var $97=HEAP32[(($96)>>2)];
+      var $97=HEAP[$96];
       var $98=$97 & -2049;
-      HEAP32[(($96)>>2)]=$98;
+      HEAP[$96]=$98;
       var $99=$al;
       var $100=(($99)&255);
       var $101=$100 & 128;
@@ -1001,18 +922,18 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $105=(($104+4)|0);
       var $106=(($105+96)|0);
       var $107=$106;
-      var $108=HEAP32[(($107)>>2)];
+      var $108=HEAP[$107];
       var $109=$108 | 128;
-      HEAP32[(($107)>>2)]=$109;
+      HEAP[$107]=$109;
       __label__ = 15; break;
     case 14: 
       var $111=$3;
       var $112=(($111+4)|0);
       var $113=(($112+96)|0);
       var $114=$113;
-      var $115=HEAP32[(($114)>>2)];
+      var $115=HEAP[$114];
       var $116=$115 & -129;
-      HEAP32[(($114)>>2)]=$116;
+      HEAP[$114]=$116;
       __label__ = 15; break;
     case 15: 
       var $118=$al;
@@ -1023,18 +944,18 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $122=(($121+4)|0);
       var $123=(($122+96)|0);
       var $124=$123;
-      var $125=HEAP32[(($124)>>2)];
+      var $125=HEAP[$124];
       var $126=$125 | 64;
-      HEAP32[(($124)>>2)]=$126;
+      HEAP[$124]=$126;
       __label__ = 18; break;
     case 17: 
       var $128=$3;
       var $129=(($128+4)|0);
       var $130=(($129+96)|0);
       var $131=$130;
-      var $132=HEAP32[(($131)>>2)];
+      var $132=HEAP[$131];
       var $133=$132 & -65;
-      HEAP32[(($131)>>2)]=$133;
+      HEAP[$131]=$133;
       __label__ = 18; break;
     case 18: 
       var $135=$al;
@@ -1046,18 +967,18 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $140=(($139+4)|0);
       var $141=(($140+96)|0);
       var $142=$141;
-      var $143=HEAP32[(($142)>>2)];
+      var $143=HEAP[$142];
       var $144=$143 | 4;
-      HEAP32[(($142)>>2)]=$144;
+      HEAP[$142]=$144;
       __label__ = 21; break;
     case 20: 
       var $146=$3;
       var $147=(($146+4)|0);
       var $148=(($147+96)|0);
       var $149=$148;
-      var $150=HEAP32[(($149)>>2)];
+      var $150=HEAP[$149];
       var $151=$150 & -5;
-      HEAP32[(($149)>>2)]=$151;
+      HEAP[$149]=$151;
       __label__ = 21; break;
     case 21: 
       var $153=$al;
@@ -1067,7 +988,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $157=(($156)|0);
       var $158=$157;
       var $159=(($158)|0);
-      HEAP8[($159)]=$153;
+      HEAP[$159]=$153;
       $1=1;
       __label__ = 81; break;
     case 22: 
@@ -1082,7 +1003,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $168=(($167)|0);
       var $169=$168;
       var $170=(($169)|0);
-      var $171=HEAP8[($170)];
+      var $171=HEAP[$170];
       $al1=$171;
       var $172=$al1;
       var $173=(($172)&255);
@@ -1094,7 +1015,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $178=(($177+4)|0);
       var $179=(($178+96)|0);
       var $180=$179;
-      var $181=HEAP32[(($180)>>2)];
+      var $181=HEAP[$180];
       var $182=$181 & 16;
       var $183=(($182)|0)!=0;
       if ($183) { __label__ = 25; break; } else { __label__ = 28; break; }
@@ -1117,27 +1038,27 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $197=(($196+4)|0);
       var $198=(($197+96)|0);
       var $199=$198;
-      var $200=HEAP32[(($199)>>2)];
+      var $200=HEAP[$199];
       var $201=$200 | 1;
-      HEAP32[(($199)>>2)]=$201;
+      HEAP[$199]=$201;
       __label__ = 27; break;
     case 27: 
       var $203=$3;
       var $204=(($203+4)|0);
       var $205=(($204+96)|0);
       var $206=$205;
-      var $207=HEAP32[(($206)>>2)];
+      var $207=HEAP[$206];
       var $208=$207 | 16;
-      HEAP32[(($206)>>2)]=$208;
+      HEAP[$206]=$208;
       __label__ = 29; break;
     case 28: 
       var $210=$3;
       var $211=(($210+4)|0);
       var $212=(($211+96)|0);
       var $213=$212;
-      var $214=HEAP32[(($213)>>2)];
+      var $214=HEAP[$213];
       var $215=$214 & -17;
-      HEAP32[(($213)>>2)]=$215;
+      HEAP[$213]=$215;
       __label__ = 29; break;
     case 29: 
       var $217=$al1;
@@ -1149,7 +1070,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $222=(($221+4)|0);
       var $223=(($222+96)|0);
       var $224=$223;
-      var $225=HEAP32[(($224)>>2)];
+      var $225=HEAP[$224];
       var $226=$225 & 1;
       var $227=(($226)|0)!=0;
       if ($227) { __label__ = 31; break; } else { __label__ = 32; break; }
@@ -1163,27 +1084,27 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $234=(($233+4)|0);
       var $235=(($234+96)|0);
       var $236=$235;
-      var $237=HEAP32[(($236)>>2)];
+      var $237=HEAP[$236];
       var $238=$237 | 1;
-      HEAP32[(($236)>>2)]=$238;
+      HEAP[$236]=$238;
       __label__ = 33; break;
     case 32: 
       var $240=$3;
       var $241=(($240+4)|0);
       var $242=(($241+96)|0);
       var $243=$242;
-      var $244=HEAP32[(($243)>>2)];
+      var $244=HEAP[$243];
       var $245=$244 & -2;
-      HEAP32[(($243)>>2)]=$245;
+      HEAP[$243]=$245;
       __label__ = 33; break;
     case 33: 
       var $247=$3;
       var $248=(($247+4)|0);
       var $249=(($248+96)|0);
       var $250=$249;
-      var $251=HEAP32[(($250)>>2)];
+      var $251=HEAP[$250];
       var $252=$251 & -2049;
-      HEAP32[(($250)>>2)]=$252;
+      HEAP[$250]=$252;
       var $253=$al1;
       var $254=(($253)&255);
       var $255=$254 & 128;
@@ -1194,18 +1115,18 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $259=(($258+4)|0);
       var $260=(($259+96)|0);
       var $261=$260;
-      var $262=HEAP32[(($261)>>2)];
+      var $262=HEAP[$261];
       var $263=$262 | 128;
-      HEAP32[(($261)>>2)]=$263;
+      HEAP[$261]=$263;
       __label__ = 36; break;
     case 35: 
       var $265=$3;
       var $266=(($265+4)|0);
       var $267=(($266+96)|0);
       var $268=$267;
-      var $269=HEAP32[(($268)>>2)];
+      var $269=HEAP[$268];
       var $270=$269 & -129;
-      HEAP32[(($268)>>2)]=$270;
+      HEAP[$268]=$270;
       __label__ = 36; break;
     case 36: 
       var $272=$al1;
@@ -1216,18 +1137,18 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $276=(($275+4)|0);
       var $277=(($276+96)|0);
       var $278=$277;
-      var $279=HEAP32[(($278)>>2)];
+      var $279=HEAP[$278];
       var $280=$279 | 64;
-      HEAP32[(($278)>>2)]=$280;
+      HEAP[$278]=$280;
       __label__ = 39; break;
     case 38: 
       var $282=$3;
       var $283=(($282+4)|0);
       var $284=(($283+96)|0);
       var $285=$284;
-      var $286=HEAP32[(($285)>>2)];
+      var $286=HEAP[$285];
       var $287=$286 & -65;
-      HEAP32[(($285)>>2)]=$287;
+      HEAP[$285]=$287;
       __label__ = 39; break;
     case 39: 
       var $289=$al1;
@@ -1239,18 +1160,18 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $294=(($293+4)|0);
       var $295=(($294+96)|0);
       var $296=$295;
-      var $297=HEAP32[(($296)>>2)];
+      var $297=HEAP[$296];
       var $298=$297 | 4;
-      HEAP32[(($296)>>2)]=$298;
+      HEAP[$296]=$298;
       __label__ = 42; break;
     case 41: 
       var $300=$3;
       var $301=(($300+4)|0);
       var $302=(($301+96)|0);
       var $303=$302;
-      var $304=HEAP32[(($303)>>2)];
+      var $304=HEAP[$303];
       var $305=$304 & -5;
-      HEAP32[(($303)>>2)]=$305;
+      HEAP[$303]=$305;
       __label__ = 42; break;
     case 42: 
       var $307=$al1;
@@ -1260,7 +1181,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $311=(($310)|0);
       var $312=$311;
       var $313=(($312)|0);
-      HEAP8[($313)]=$307;
+      HEAP[$313]=$307;
       $1=1;
       __label__ = 81; break;
     case 43: 
@@ -1275,7 +1196,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $322=(($321)|0);
       var $323=$322;
       var $324=(($323)|0);
-      var $325=HEAP8[($324)];
+      var $325=HEAP[$324];
       $al3=$325;
       var $326=$3;
       var $327=(($326+4)|0);
@@ -1283,7 +1204,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $329=(($328)|0);
       var $330=$329;
       var $331=(($330+1)|0);
-      var $332=HEAP8[($331)];
+      var $332=HEAP[$331];
       $ah=$332;
       var $333=$al3;
       var $334=(($333)&255);
@@ -1295,7 +1216,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $339=(($338+4)|0);
       var $340=(($339+96)|0);
       var $341=$340;
-      var $342=HEAP32[(($341)>>2)];
+      var $342=HEAP[$341];
       var $343=$342 & 16;
       var $344=(($343)|0)!=0;
       if ($344) { __label__ = 46; break; } else { __label__ = 47; break; }
@@ -1312,18 +1233,18 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $353=(($352+4)|0);
       var $354=(($353+96)|0);
       var $355=$354;
-      var $356=HEAP32[(($355)>>2)];
+      var $356=HEAP[$355];
       var $357=$356 | 17;
-      HEAP32[(($355)>>2)]=$357;
+      HEAP[$355]=$357;
       __label__ = 48; break;
     case 47: 
       var $359=$3;
       var $360=(($359+4)|0);
       var $361=(($360+96)|0);
       var $362=$361;
-      var $363=HEAP32[(($362)>>2)];
+      var $363=HEAP[$362];
       var $364=$363 & -18;
-      HEAP32[(($362)>>2)]=$364;
+      HEAP[$362]=$364;
       __label__ = 48; break;
     case 48: 
       var $366=$ah;
@@ -1333,7 +1254,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $370=(($369)|0);
       var $371=$370;
       var $372=(($371+1)|0);
-      HEAP8[($372)]=$366;
+      HEAP[$372]=$366;
       var $373=$al3;
       var $374=(($373)&255);
       var $375=$374 & 15;
@@ -1344,35 +1265,35 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $380=(($379)|0);
       var $381=$380;
       var $382=(($381)|0);
-      HEAP8[($382)]=$376;
+      HEAP[$382]=$376;
       var $383=$3;
       var $384=(($383+4)|0);
       var $385=(($384+96)|0);
       var $386=$385;
-      var $387=HEAP32[(($386)>>2)];
+      var $387=HEAP[$386];
       var $388=$387 & -129;
-      HEAP32[(($386)>>2)]=$388;
+      HEAP[$386]=$388;
       var $389=$3;
       var $390=(($389+4)|0);
       var $391=(($390+96)|0);
       var $392=$391;
-      var $393=HEAP32[(($392)>>2)];
+      var $393=HEAP[$392];
       var $394=$393 & -65;
-      HEAP32[(($392)>>2)]=$394;
+      HEAP[$392]=$394;
       var $395=$3;
       var $396=(($395+4)|0);
       var $397=(($396+96)|0);
       var $398=$397;
-      var $399=HEAP32[(($398)>>2)];
+      var $399=HEAP[$398];
       var $400=$399 & -5;
-      HEAP32[(($398)>>2)]=$400;
+      HEAP[$398]=$400;
       var $401=$3;
       var $402=(($401+4)|0);
       var $403=(($402+96)|0);
       var $404=$403;
-      var $405=HEAP32[(($404)>>2)];
+      var $405=HEAP[$404];
       var $406=$405 & -2049;
-      HEAP32[(($404)>>2)]=$406;
+      HEAP[$404]=$406;
       $1=1;
       __label__ = 81; break;
     case 49: 
@@ -1387,7 +1308,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $415=(($414)|0);
       var $416=$415;
       var $417=(($416)|0);
-      var $418=HEAP8[($417)];
+      var $418=HEAP[$417];
       $al5=$418;
       var $419=$3;
       var $420=(($419+4)|0);
@@ -1395,7 +1316,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $422=(($421)|0);
       var $423=$422;
       var $424=(($423+1)|0);
-      var $425=HEAP8[($424)];
+      var $425=HEAP[$424];
       $ah4=$425;
       var $426=$al5;
       var $427=(($426)&255);
@@ -1407,7 +1328,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $432=(($431+4)|0);
       var $433=(($432+96)|0);
       var $434=$433;
-      var $435=HEAP32[(($434)>>2)];
+      var $435=HEAP[$434];
       var $436=$435 & 16;
       var $437=(($436)|0)!=0;
       if ($437) { __label__ = 52; break; } else { __label__ = 53; break; }
@@ -1424,18 +1345,18 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $446=(($445+4)|0);
       var $447=(($446+96)|0);
       var $448=$447;
-      var $449=HEAP32[(($448)>>2)];
+      var $449=HEAP[$448];
       var $450=$449 | 17;
-      HEAP32[(($448)>>2)]=$450;
+      HEAP[$448]=$450;
       __label__ = 54; break;
     case 53: 
       var $452=$3;
       var $453=(($452+4)|0);
       var $454=(($453+96)|0);
       var $455=$454;
-      var $456=HEAP32[(($455)>>2)];
+      var $456=HEAP[$455];
       var $457=$456 & -18;
-      HEAP32[(($455)>>2)]=$457;
+      HEAP[$455]=$457;
       __label__ = 54; break;
     case 54: 
       var $459=$ah4;
@@ -1445,7 +1366,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $463=(($462)|0);
       var $464=$463;
       var $465=(($464+1)|0);
-      HEAP8[($465)]=$459;
+      HEAP[$465]=$459;
       var $466=$al5;
       var $467=(($466)&255);
       var $468=$467 & 15;
@@ -1456,35 +1377,35 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $473=(($472)|0);
       var $474=$473;
       var $475=(($474)|0);
-      HEAP8[($475)]=$469;
+      HEAP[$475]=$469;
       var $476=$3;
       var $477=(($476+4)|0);
       var $478=(($477+96)|0);
       var $479=$478;
-      var $480=HEAP32[(($479)>>2)];
+      var $480=HEAP[$479];
       var $481=$480 & -129;
-      HEAP32[(($479)>>2)]=$481;
+      HEAP[$479]=$481;
       var $482=$3;
       var $483=(($482+4)|0);
       var $484=(($483+96)|0);
       var $485=$484;
-      var $486=HEAP32[(($485)>>2)];
+      var $486=HEAP[$485];
       var $487=$486 & -65;
-      HEAP32[(($485)>>2)]=$487;
+      HEAP[$485]=$487;
       var $488=$3;
       var $489=(($488+4)|0);
       var $490=(($489+96)|0);
       var $491=$490;
-      var $492=HEAP32[(($491)>>2)];
+      var $492=HEAP[$491];
       var $493=$492 & -5;
-      HEAP32[(($491)>>2)]=$493;
+      HEAP[$491]=$493;
       var $494=$3;
       var $495=(($494+4)|0);
       var $496=(($495+96)|0);
       var $497=$496;
-      var $498=HEAP32[(($497)>>2)];
+      var $498=HEAP[$497];
       var $499=$498 & -2049;
-      HEAP32[(($497)>>2)]=$499;
+      HEAP[$497]=$499;
       $1=1;
       __label__ = 81; break;
     case 55: 
@@ -1502,7 +1423,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $510=(($509)|0);
       var $511=$510;
       var $512=(($511)|0);
-      var $513=HEAP8[($512)];
+      var $513=HEAP[$512];
       $al7=$513;
       var $514=$x;
       var $515=(($514)&255);
@@ -1534,7 +1455,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $536=(($535)|0);
       var $537=$536;
       var $538=(($537+1)|0);
-      HEAP8[($538)]=$532;
+      HEAP[$538]=$532;
       var $539=$al7;
       var $540=$3;
       var $541=(($540+4)|0);
@@ -1542,7 +1463,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $543=(($542)|0);
       var $544=$543;
       var $545=(($544)|0);
-      HEAP8[($545)]=$539;
+      HEAP[$545]=$539;
       var $546=$al7;
       var $547=(($546)&255);
       var $548=$547 & 128;
@@ -1553,18 +1474,18 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $552=(($551+4)|0);
       var $553=(($552+96)|0);
       var $554=$553;
-      var $555=HEAP32[(($554)>>2)];
+      var $555=HEAP[$554];
       var $556=$555 | 128;
-      HEAP32[(($554)>>2)]=$556;
+      HEAP[$554]=$556;
       __label__ = 62; break;
     case 61: 
       var $558=$3;
       var $559=(($558+4)|0);
       var $560=(($559+96)|0);
       var $561=$560;
-      var $562=HEAP32[(($561)>>2)];
+      var $562=HEAP[$561];
       var $563=$562 & -129;
-      HEAP32[(($561)>>2)]=$563;
+      HEAP[$561]=$563;
       __label__ = 62; break;
     case 62: 
       var $565=$al7;
@@ -1575,18 +1496,18 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $569=(($568+4)|0);
       var $570=(($569+96)|0);
       var $571=$570;
-      var $572=HEAP32[(($571)>>2)];
+      var $572=HEAP[$571];
       var $573=$572 | 64;
-      HEAP32[(($571)>>2)]=$573;
+      HEAP[$571]=$573;
       __label__ = 65; break;
     case 64: 
       var $575=$3;
       var $576=(($575+4)|0);
       var $577=(($576+96)|0);
       var $578=$577;
-      var $579=HEAP32[(($578)>>2)];
+      var $579=HEAP[$578];
       var $580=$579 & -65;
-      HEAP32[(($578)>>2)]=$580;
+      HEAP[$578]=$580;
       __label__ = 65; break;
     case 65: 
       var $582=$al7;
@@ -1598,41 +1519,41 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $587=(($586+4)|0);
       var $588=(($587+96)|0);
       var $589=$588;
-      var $590=HEAP32[(($589)>>2)];
+      var $590=HEAP[$589];
       var $591=$590 | 4;
-      HEAP32[(($589)>>2)]=$591;
+      HEAP[$589]=$591;
       __label__ = 68; break;
     case 67: 
       var $593=$3;
       var $594=(($593+4)|0);
       var $595=(($594+96)|0);
       var $596=$595;
-      var $597=HEAP32[(($596)>>2)];
+      var $597=HEAP[$596];
       var $598=$597 & -5;
-      HEAP32[(($596)>>2)]=$598;
+      HEAP[$596]=$598;
       __label__ = 68; break;
     case 68: 
       var $600=$3;
       var $601=(($600+4)|0);
       var $602=(($601+96)|0);
       var $603=$602;
-      var $604=HEAP32[(($603)>>2)];
+      var $604=HEAP[$603];
       var $605=$604 & -2049;
-      HEAP32[(($603)>>2)]=$605;
+      HEAP[$603]=$605;
       var $606=$3;
       var $607=(($606+4)|0);
       var $608=(($607+96)|0);
       var $609=$608;
-      var $610=HEAP32[(($609)>>2)];
+      var $610=HEAP[$609];
       var $611=$610 & -17;
-      HEAP32[(($609)>>2)]=$611;
+      HEAP[$609]=$611;
       var $612=$3;
       var $613=(($612+4)|0);
       var $614=(($613+96)|0);
       var $615=$614;
-      var $616=HEAP32[(($615)>>2)];
+      var $616=HEAP[$615];
       var $617=$616 & -2;
-      HEAP32[(($615)>>2)]=$617;
+      HEAP[$615]=$617;
       $1=1;
       __label__ = 81; break;
     case 69: 
@@ -1650,7 +1571,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $628=(($627)|0);
       var $629=$628;
       var $630=(($629)|0);
-      var $631=HEAP8[($630)];
+      var $631=HEAP[$630];
       $al9=$631;
       var $632=$3;
       var $633=(($632+4)|0);
@@ -1658,7 +1579,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $635=(($634)|0);
       var $636=$635;
       var $637=(($636+1)|0);
-      var $638=HEAP8[($637)];
+      var $638=HEAP[$637];
       $ah8=$638;
       var $639=$al9;
       var $640=(($639)&255);
@@ -1679,7 +1600,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $653=(($652)|0);
       var $654=$653;
       var $655=(($654+1)|0);
-      HEAP8[($655)]=$649;
+      HEAP[$655]=$649;
       var $656=$al9;
       var $657=$3;
       var $658=(($657+4)|0);
@@ -1687,7 +1608,7 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $660=(($659)|0);
       var $661=$660;
       var $662=(($661)|0);
-      HEAP8[($662)]=$656;
+      HEAP[$662]=$656;
       var $663=$al9;
       var $664=(($663)&255);
       var $665=$664 & 128;
@@ -1698,18 +1619,18 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $669=(($668+4)|0);
       var $670=(($669+96)|0);
       var $671=$670;
-      var $672=HEAP32[(($671)>>2)];
+      var $672=HEAP[$671];
       var $673=$672 | 128;
-      HEAP32[(($671)>>2)]=$673;
+      HEAP[$671]=$673;
       __label__ = 73; break;
     case 72: 
       var $675=$3;
       var $676=(($675+4)|0);
       var $677=(($676+96)|0);
       var $678=$677;
-      var $679=HEAP32[(($678)>>2)];
+      var $679=HEAP[$678];
       var $680=$679 & -129;
-      HEAP32[(($678)>>2)]=$680;
+      HEAP[$678]=$680;
       __label__ = 73; break;
     case 73: 
       var $682=$al9;
@@ -1720,18 +1641,18 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $686=(($685+4)|0);
       var $687=(($686+96)|0);
       var $688=$687;
-      var $689=HEAP32[(($688)>>2)];
+      var $689=HEAP[$688];
       var $690=$689 | 64;
-      HEAP32[(($688)>>2)]=$690;
+      HEAP[$688]=$690;
       __label__ = 76; break;
     case 75: 
       var $692=$3;
       var $693=(($692+4)|0);
       var $694=(($693+96)|0);
       var $695=$694;
-      var $696=HEAP32[(($695)>>2)];
+      var $696=HEAP[$695];
       var $697=$696 & -65;
-      HEAP32[(($695)>>2)]=$697;
+      HEAP[$695]=$697;
       __label__ = 76; break;
     case 76: 
       var $699=$al9;
@@ -1743,41 +1664,41 @@ function _Sfx86OpcodeExec_aaaseries($opcode, $ctx) {
       var $704=(($703+4)|0);
       var $705=(($704+96)|0);
       var $706=$705;
-      var $707=HEAP32[(($706)>>2)];
+      var $707=HEAP[$706];
       var $708=$707 | 4;
-      HEAP32[(($706)>>2)]=$708;
+      HEAP[$706]=$708;
       __label__ = 79; break;
     case 78: 
       var $710=$3;
       var $711=(($710+4)|0);
       var $712=(($711+96)|0);
       var $713=$712;
-      var $714=HEAP32[(($713)>>2)];
+      var $714=HEAP[$713];
       var $715=$714 & -5;
-      HEAP32[(($713)>>2)]=$715;
+      HEAP[$713]=$715;
       __label__ = 79; break;
     case 79: 
       var $717=$3;
       var $718=(($717+4)|0);
       var $719=(($718+96)|0);
       var $720=$719;
-      var $721=HEAP32[(($720)>>2)];
+      var $721=HEAP[$720];
       var $722=$721 & -2049;
-      HEAP32[(($720)>>2)]=$722;
+      HEAP[$720]=$722;
       var $723=$3;
       var $724=(($723+4)|0);
       var $725=(($724+96)|0);
       var $726=$725;
-      var $727=HEAP32[(($726)>>2)];
+      var $727=HEAP[$726];
       var $728=$727 & -17;
-      HEAP32[(($726)>>2)]=$728;
+      HEAP[$726]=$728;
       var $729=$3;
       var $730=(($729+4)|0);
       var $731=(($730+96)|0);
       var $732=$731;
-      var $733=HEAP32[(($732)>>2)];
+      var $733=HEAP[$732];
       var $734=$733 & -2;
-      HEAP32[(($732)>>2)]=$734;
+      HEAP[$732]=$734;
       $1=1;
       __label__ = 81; break;
     case 80: 
@@ -1866,7 +1787,7 @@ function _Sfx86OpcodeDec_aaaseries($opcode, $ctx, $buf) {
       var $46=$4;
       var $47=$x;
       var $48=(($47)&255);
-      var $49=_sprintf($46, ((STRING_TABLE.__str5)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$48,tempInt));
+      var $49=_sprintf($46, ((STRING_TABLE.__str5)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$48,tempInt));
       __label__ = 13; break;
     case 13: 
       $1=1;
@@ -1892,7 +1813,7 @@ function _Sfx86OpcodeDec_aaaseries($opcode, $ctx, $buf) {
       var $65=$4;
       var $66=$x;
       var $67=(($66)&255);
-      var $68=_sprintf($65, ((STRING_TABLE.__str7)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$67,tempInt));
+      var $68=_sprintf($65, ((STRING_TABLE.__str7)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$67,tempInt));
       __label__ = 18; break;
     case 18: 
       $1=1;
@@ -1940,18 +1861,18 @@ function _op_add8($ctx, $src, $val) {
       var $17=(($16+4)|0);
       var $18=(($17+96)|0);
       var $19=$18;
-      var $20=HEAP32[(($19)>>2)];
+      var $20=HEAP[$19];
       var $21=$20 | 2049;
-      HEAP32[(($19)>>2)]=$21;
+      HEAP[$19]=$21;
       __label__ = 4; break;
     case 3: 
       var $23=$1;
       var $24=(($23+4)|0);
       var $25=(($24+96)|0);
       var $26=$25;
-      var $27=HEAP32[(($26)>>2)];
+      var $27=HEAP[$26];
       var $28=$27 & -2050;
-      HEAP32[(($26)>>2)]=$28;
+      HEAP[$26]=$28;
       __label__ = 4; break;
     case 4: 
       var $30=$ret;
@@ -1964,18 +1885,18 @@ function _op_add8($ctx, $src, $val) {
       var $36=(($35+4)|0);
       var $37=(($36+96)|0);
       var $38=$37;
-      var $39=HEAP32[(($38)>>2)];
+      var $39=HEAP[$38];
       var $40=$39 | 128;
-      HEAP32[(($38)>>2)]=$40;
+      HEAP[$38]=$40;
       __label__ = 7; break;
     case 6: 
       var $42=$1;
       var $43=(($42+4)|0);
       var $44=(($43+96)|0);
       var $45=$44;
-      var $46=HEAP32[(($45)>>2)];
+      var $46=HEAP[$45];
       var $47=$46 & -129;
-      HEAP32[(($45)>>2)]=$47;
+      HEAP[$45]=$47;
       __label__ = 7; break;
     case 7: 
       var $49=$ret;
@@ -1986,18 +1907,18 @@ function _op_add8($ctx, $src, $val) {
       var $53=(($52+4)|0);
       var $54=(($53+96)|0);
       var $55=$54;
-      var $56=HEAP32[(($55)>>2)];
+      var $56=HEAP[$55];
       var $57=$56 | 64;
-      HEAP32[(($55)>>2)]=$57;
+      HEAP[$55]=$57;
       __label__ = 10; break;
     case 9: 
       var $59=$1;
       var $60=(($59+4)|0);
       var $61=(($60+96)|0);
       var $62=$61;
-      var $63=HEAP32[(($62)>>2)];
+      var $63=HEAP[$62];
       var $64=$63 & -65;
-      HEAP32[(($62)>>2)]=$64;
+      HEAP[$62]=$64;
       __label__ = 10; break;
     case 10: 
       var $66=$3;
@@ -2014,18 +1935,18 @@ function _op_add8($ctx, $src, $val) {
       var $76=(($75+4)|0);
       var $77=(($76+96)|0);
       var $78=$77;
-      var $79=HEAP32[(($78)>>2)];
+      var $79=HEAP[$78];
       var $80=$79 | 16;
-      HEAP32[(($78)>>2)]=$80;
+      HEAP[$78]=$80;
       __label__ = 13; break;
     case 12: 
       var $82=$1;
       var $83=(($82+4)|0);
       var $84=(($83+96)|0);
       var $85=$84;
-      var $86=HEAP32[(($85)>>2)];
+      var $86=HEAP[$85];
       var $87=$86 & -17;
-      HEAP32[(($85)>>2)]=$87;
+      HEAP[$85]=$87;
       __label__ = 13; break;
     case 13: 
       var $89=$ret;
@@ -2037,18 +1958,18 @@ function _op_add8($ctx, $src, $val) {
       var $94=(($93+4)|0);
       var $95=(($94+96)|0);
       var $96=$95;
-      var $97=HEAP32[(($96)>>2)];
+      var $97=HEAP[$96];
       var $98=$97 | 4;
-      HEAP32[(($96)>>2)]=$98;
+      HEAP[$96]=$98;
       __label__ = 16; break;
     case 15: 
       var $100=$1;
       var $101=(($100+4)|0);
       var $102=(($101+96)|0);
       var $103=$102;
-      var $104=HEAP32[(($103)>>2)];
+      var $104=HEAP[$103];
       var $105=$104 & -5;
-      HEAP32[(($103)>>2)]=$105;
+      HEAP[$103]=$105;
       __label__ = 16; break;
     case 16: 
       var $107=$ret;
@@ -2090,18 +2011,18 @@ function _op_add16($ctx, $src, $val) {
       var $17=(($16+4)|0);
       var $18=(($17+96)|0);
       var $19=$18;
-      var $20=HEAP32[(($19)>>2)];
+      var $20=HEAP[$19];
       var $21=$20 | 2049;
-      HEAP32[(($19)>>2)]=$21;
+      HEAP[$19]=$21;
       __label__ = 4; break;
     case 3: 
       var $23=$1;
       var $24=(($23+4)|0);
       var $25=(($24+96)|0);
       var $26=$25;
-      var $27=HEAP32[(($26)>>2)];
+      var $27=HEAP[$26];
       var $28=$27 & -2050;
-      HEAP32[(($26)>>2)]=$28;
+      HEAP[$26]=$28;
       __label__ = 4; break;
     case 4: 
       var $30=$ret;
@@ -2114,18 +2035,18 @@ function _op_add16($ctx, $src, $val) {
       var $36=(($35+4)|0);
       var $37=(($36+96)|0);
       var $38=$37;
-      var $39=HEAP32[(($38)>>2)];
+      var $39=HEAP[$38];
       var $40=$39 | 128;
-      HEAP32[(($38)>>2)]=$40;
+      HEAP[$38]=$40;
       __label__ = 7; break;
     case 6: 
       var $42=$1;
       var $43=(($42+4)|0);
       var $44=(($43+96)|0);
       var $45=$44;
-      var $46=HEAP32[(($45)>>2)];
+      var $46=HEAP[$45];
       var $47=$46 & -129;
-      HEAP32[(($45)>>2)]=$47;
+      HEAP[$45]=$47;
       __label__ = 7; break;
     case 7: 
       var $49=$ret;
@@ -2136,18 +2057,18 @@ function _op_add16($ctx, $src, $val) {
       var $53=(($52+4)|0);
       var $54=(($53+96)|0);
       var $55=$54;
-      var $56=HEAP32[(($55)>>2)];
+      var $56=HEAP[$55];
       var $57=$56 | 64;
-      HEAP32[(($55)>>2)]=$57;
+      HEAP[$55]=$57;
       __label__ = 10; break;
     case 9: 
       var $59=$1;
       var $60=(($59+4)|0);
       var $61=(($60+96)|0);
       var $62=$61;
-      var $63=HEAP32[(($62)>>2)];
+      var $63=HEAP[$62];
       var $64=$63 & -65;
-      HEAP32[(($62)>>2)]=$64;
+      HEAP[$62]=$64;
       __label__ = 10; break;
     case 10: 
       var $66=$3;
@@ -2164,18 +2085,18 @@ function _op_add16($ctx, $src, $val) {
       var $76=(($75+4)|0);
       var $77=(($76+96)|0);
       var $78=$77;
-      var $79=HEAP32[(($78)>>2)];
+      var $79=HEAP[$78];
       var $80=$79 | 16;
-      HEAP32[(($78)>>2)]=$80;
+      HEAP[$78]=$80;
       __label__ = 13; break;
     case 12: 
       var $82=$1;
       var $83=(($82+4)|0);
       var $84=(($83+96)|0);
       var $85=$84;
-      var $86=HEAP32[(($85)>>2)];
+      var $86=HEAP[$85];
       var $87=$86 & -17;
-      HEAP32[(($85)>>2)]=$87;
+      HEAP[$85]=$87;
       __label__ = 13; break;
     case 13: 
       var $89=$ret;
@@ -2187,18 +2108,18 @@ function _op_add16($ctx, $src, $val) {
       var $94=(($93+4)|0);
       var $95=(($94+96)|0);
       var $96=$95;
-      var $97=HEAP32[(($96)>>2)];
+      var $97=HEAP[$96];
       var $98=$97 | 4;
-      HEAP32[(($96)>>2)]=$98;
+      HEAP[$96]=$98;
       __label__ = 16; break;
     case 15: 
       var $100=$1;
       var $101=(($100+4)|0);
       var $102=(($101+96)|0);
       var $103=$102;
-      var $104=HEAP32[(($103)>>2)];
+      var $104=HEAP[$103];
       var $105=$104 & -5;
-      HEAP32[(($103)>>2)]=$105;
+      HEAP[$103]=$105;
       __label__ = 16; break;
     case 16: 
       var $107=$ret;
@@ -2235,18 +2156,18 @@ function _op_add32($ctx, $src, $val) {
       var $12=(($11+4)|0);
       var $13=(($12+96)|0);
       var $14=$13;
-      var $15=HEAP32[(($14)>>2)];
+      var $15=HEAP[$14];
       var $16=$15 | 2049;
-      HEAP32[(($14)>>2)]=$16;
+      HEAP[$14]=$16;
       __label__ = 4; break;
     case 3: 
       var $18=$1;
       var $19=(($18+4)|0);
       var $20=(($19+96)|0);
       var $21=$20;
-      var $22=HEAP32[(($21)>>2)];
+      var $22=HEAP[$21];
       var $23=$22 & -2050;
-      HEAP32[(($21)>>2)]=$23;
+      HEAP[$21]=$23;
       __label__ = 4; break;
     case 4: 
       var $25=$ret;
@@ -2258,18 +2179,18 @@ function _op_add32($ctx, $src, $val) {
       var $30=(($29+4)|0);
       var $31=(($30+96)|0);
       var $32=$31;
-      var $33=HEAP32[(($32)>>2)];
+      var $33=HEAP[$32];
       var $34=$33 | 128;
-      HEAP32[(($32)>>2)]=$34;
+      HEAP[$32]=$34;
       __label__ = 7; break;
     case 6: 
       var $36=$1;
       var $37=(($36+4)|0);
       var $38=(($37+96)|0);
       var $39=$38;
-      var $40=HEAP32[(($39)>>2)];
+      var $40=HEAP[$39];
       var $41=$40 & -129;
-      HEAP32[(($39)>>2)]=$41;
+      HEAP[$39]=$41;
       __label__ = 7; break;
     case 7: 
       var $43=$ret;
@@ -2280,18 +2201,18 @@ function _op_add32($ctx, $src, $val) {
       var $47=(($46+4)|0);
       var $48=(($47+96)|0);
       var $49=$48;
-      var $50=HEAP32[(($49)>>2)];
+      var $50=HEAP[$49];
       var $51=$50 | 64;
-      HEAP32[(($49)>>2)]=$51;
+      HEAP[$49]=$51;
       __label__ = 10; break;
     case 9: 
       var $53=$1;
       var $54=(($53+4)|0);
       var $55=(($54+96)|0);
       var $56=$55;
-      var $57=HEAP32[(($56)>>2)];
+      var $57=HEAP[$56];
       var $58=$57 & -65;
-      HEAP32[(($56)>>2)]=$58;
+      HEAP[$56]=$58;
       __label__ = 10; break;
     case 10: 
       var $60=$3;
@@ -2306,18 +2227,18 @@ function _op_add32($ctx, $src, $val) {
       var $68=(($67+4)|0);
       var $69=(($68+96)|0);
       var $70=$69;
-      var $71=HEAP32[(($70)>>2)];
+      var $71=HEAP[$70];
       var $72=$71 | 16;
-      HEAP32[(($70)>>2)]=$72;
+      HEAP[$70]=$72;
       __label__ = 13; break;
     case 12: 
       var $74=$1;
       var $75=(($74+4)|0);
       var $76=(($75+96)|0);
       var $77=$76;
-      var $78=HEAP32[(($77)>>2)];
+      var $78=HEAP[$77];
       var $79=$78 & -17;
-      HEAP32[(($77)>>2)]=$79;
+      HEAP[$77]=$79;
       __label__ = 13; break;
     case 13: 
       var $81=$ret;
@@ -2330,18 +2251,18 @@ function _op_add32($ctx, $src, $val) {
       var $87=(($86+4)|0);
       var $88=(($87+96)|0);
       var $89=$88;
-      var $90=HEAP32[(($89)>>2)];
+      var $90=HEAP[$89];
       var $91=$90 | 4;
-      HEAP32[(($89)>>2)]=$91;
+      HEAP[$89]=$91;
       __label__ = 16; break;
     case 15: 
       var $93=$1;
       var $94=(($93+4)|0);
       var $95=(($94+96)|0);
       var $96=$95;
-      var $97=HEAP32[(($96)>>2)];
+      var $97=HEAP[$96];
       var $98=$97 & -5;
-      HEAP32[(($96)>>2)]=$98;
+      HEAP[$96]=$98;
       __label__ = 16; break;
     case 16: 
       var $100=$ret;
@@ -2370,7 +2291,7 @@ function _op_adc8($ctx, $src, $val) {
       var $5=(($4+4)|0);
       var $6=(($5+96)|0);
       var $7=$6;
-      var $8=HEAP32[(($7)>>2)];
+      var $8=HEAP[$7];
       var $9=$8 & 1;
       var $10=(($9) & 255);
       var $11=(($10)&255);
@@ -2394,9 +2315,9 @@ function _op_adc8($ctx, $src, $val) {
       var $25=(($24+4)|0);
       var $26=(($25+96)|0);
       var $27=$26;
-      var $28=HEAP32[(($27)>>2)];
+      var $28=HEAP[$27];
       var $29=$28 | 2049;
-      HEAP32[(($27)>>2)]=$29;
+      HEAP[$27]=$29;
       __label__ = 8; break;
     case 4: 
       var $31=$2;
@@ -2420,18 +2341,18 @@ function _op_adc8($ctx, $src, $val) {
       var $47=(($46+4)|0);
       var $48=(($47+96)|0);
       var $49=$48;
-      var $50=HEAP32[(($49)>>2)];
+      var $50=HEAP[$49];
       var $51=$50 | 2049;
-      HEAP32[(($49)>>2)]=$51;
+      HEAP[$49]=$51;
       __label__ = 7; break;
     case 6: 
       var $53=$1;
       var $54=(($53+4)|0);
       var $55=(($54+96)|0);
       var $56=$55;
-      var $57=HEAP32[(($56)>>2)];
+      var $57=HEAP[$56];
       var $58=$57 & -2050;
-      HEAP32[(($56)>>2)]=$58;
+      HEAP[$56]=$58;
       __label__ = 7; break;
     case 7: 
       __label__ = 8; break;
@@ -2446,18 +2367,18 @@ function _op_adc8($ctx, $src, $val) {
       var $67=(($66+4)|0);
       var $68=(($67+96)|0);
       var $69=$68;
-      var $70=HEAP32[(($69)>>2)];
+      var $70=HEAP[$69];
       var $71=$70 | 128;
-      HEAP32[(($69)>>2)]=$71;
+      HEAP[$69]=$71;
       __label__ = 11; break;
     case 10: 
       var $73=$1;
       var $74=(($73+4)|0);
       var $75=(($74+96)|0);
       var $76=$75;
-      var $77=HEAP32[(($76)>>2)];
+      var $77=HEAP[$76];
       var $78=$77 & -129;
-      HEAP32[(($76)>>2)]=$78;
+      HEAP[$76]=$78;
       __label__ = 11; break;
     case 11: 
       var $80=$ret;
@@ -2468,18 +2389,18 @@ function _op_adc8($ctx, $src, $val) {
       var $84=(($83+4)|0);
       var $85=(($84+96)|0);
       var $86=$85;
-      var $87=HEAP32[(($86)>>2)];
+      var $87=HEAP[$86];
       var $88=$87 | 64;
-      HEAP32[(($86)>>2)]=$88;
+      HEAP[$86]=$88;
       __label__ = 14; break;
     case 13: 
       var $90=$1;
       var $91=(($90+4)|0);
       var $92=(($91+96)|0);
       var $93=$92;
-      var $94=HEAP32[(($93)>>2)];
+      var $94=HEAP[$93];
       var $95=$94 & -65;
-      HEAP32[(($93)>>2)]=$95;
+      HEAP[$93]=$95;
       __label__ = 14; break;
     case 14: 
       var $97=$3;
@@ -2496,18 +2417,18 @@ function _op_adc8($ctx, $src, $val) {
       var $107=(($106+4)|0);
       var $108=(($107+96)|0);
       var $109=$108;
-      var $110=HEAP32[(($109)>>2)];
+      var $110=HEAP[$109];
       var $111=$110 | 16;
-      HEAP32[(($109)>>2)]=$111;
+      HEAP[$109]=$111;
       __label__ = 17; break;
     case 16: 
       var $113=$1;
       var $114=(($113+4)|0);
       var $115=(($114+96)|0);
       var $116=$115;
-      var $117=HEAP32[(($116)>>2)];
+      var $117=HEAP[$116];
       var $118=$117 & -17;
-      HEAP32[(($116)>>2)]=$118;
+      HEAP[$116]=$118;
       __label__ = 17; break;
     case 17: 
       var $120=$ret;
@@ -2519,18 +2440,18 @@ function _op_adc8($ctx, $src, $val) {
       var $125=(($124+4)|0);
       var $126=(($125+96)|0);
       var $127=$126;
-      var $128=HEAP32[(($127)>>2)];
+      var $128=HEAP[$127];
       var $129=$128 | 4;
-      HEAP32[(($127)>>2)]=$129;
+      HEAP[$127]=$129;
       __label__ = 20; break;
     case 19: 
       var $131=$1;
       var $132=(($131+4)|0);
       var $133=(($132+96)|0);
       var $134=$133;
-      var $135=HEAP32[(($134)>>2)];
+      var $135=HEAP[$134];
       var $136=$135 & -5;
-      HEAP32[(($134)>>2)]=$136;
+      HEAP[$134]=$136;
       __label__ = 20; break;
     case 20: 
       var $138=$ret;
@@ -2559,7 +2480,7 @@ function _op_adc16($ctx, $src, $val) {
       var $5=(($4+4)|0);
       var $6=(($5+96)|0);
       var $7=$6;
-      var $8=HEAP32[(($7)>>2)];
+      var $8=HEAP[$7];
       var $9=$8 & 1;
       var $10=(($9) & 255);
       var $11=(($10)&255);
@@ -2583,9 +2504,9 @@ function _op_adc16($ctx, $src, $val) {
       var $25=(($24+4)|0);
       var $26=(($25+96)|0);
       var $27=$26;
-      var $28=HEAP32[(($27)>>2)];
+      var $28=HEAP[$27];
       var $29=$28 | 2049;
-      HEAP32[(($27)>>2)]=$29;
+      HEAP[$27]=$29;
       __label__ = 8; break;
     case 4: 
       var $31=$2;
@@ -2609,18 +2530,18 @@ function _op_adc16($ctx, $src, $val) {
       var $47=(($46+4)|0);
       var $48=(($47+96)|0);
       var $49=$48;
-      var $50=HEAP32[(($49)>>2)];
+      var $50=HEAP[$49];
       var $51=$50 | 2049;
-      HEAP32[(($49)>>2)]=$51;
+      HEAP[$49]=$51;
       __label__ = 7; break;
     case 6: 
       var $53=$1;
       var $54=(($53+4)|0);
       var $55=(($54+96)|0);
       var $56=$55;
-      var $57=HEAP32[(($56)>>2)];
+      var $57=HEAP[$56];
       var $58=$57 & -2050;
-      HEAP32[(($56)>>2)]=$58;
+      HEAP[$56]=$58;
       __label__ = 7; break;
     case 7: 
       __label__ = 8; break;
@@ -2635,18 +2556,18 @@ function _op_adc16($ctx, $src, $val) {
       var $67=(($66+4)|0);
       var $68=(($67+96)|0);
       var $69=$68;
-      var $70=HEAP32[(($69)>>2)];
+      var $70=HEAP[$69];
       var $71=$70 | 128;
-      HEAP32[(($69)>>2)]=$71;
+      HEAP[$69]=$71;
       __label__ = 11; break;
     case 10: 
       var $73=$1;
       var $74=(($73+4)|0);
       var $75=(($74+96)|0);
       var $76=$75;
-      var $77=HEAP32[(($76)>>2)];
+      var $77=HEAP[$76];
       var $78=$77 & -129;
-      HEAP32[(($76)>>2)]=$78;
+      HEAP[$76]=$78;
       __label__ = 11; break;
     case 11: 
       var $80=$ret;
@@ -2657,18 +2578,18 @@ function _op_adc16($ctx, $src, $val) {
       var $84=(($83+4)|0);
       var $85=(($84+96)|0);
       var $86=$85;
-      var $87=HEAP32[(($86)>>2)];
+      var $87=HEAP[$86];
       var $88=$87 | 64;
-      HEAP32[(($86)>>2)]=$88;
+      HEAP[$86]=$88;
       __label__ = 14; break;
     case 13: 
       var $90=$1;
       var $91=(($90+4)|0);
       var $92=(($91+96)|0);
       var $93=$92;
-      var $94=HEAP32[(($93)>>2)];
+      var $94=HEAP[$93];
       var $95=$94 & -65;
-      HEAP32[(($93)>>2)]=$95;
+      HEAP[$93]=$95;
       __label__ = 14; break;
     case 14: 
       var $97=$3;
@@ -2685,18 +2606,18 @@ function _op_adc16($ctx, $src, $val) {
       var $107=(($106+4)|0);
       var $108=(($107+96)|0);
       var $109=$108;
-      var $110=HEAP32[(($109)>>2)];
+      var $110=HEAP[$109];
       var $111=$110 | 16;
-      HEAP32[(($109)>>2)]=$111;
+      HEAP[$109]=$111;
       __label__ = 17; break;
     case 16: 
       var $113=$1;
       var $114=(($113+4)|0);
       var $115=(($114+96)|0);
       var $116=$115;
-      var $117=HEAP32[(($116)>>2)];
+      var $117=HEAP[$116];
       var $118=$117 & -17;
-      HEAP32[(($116)>>2)]=$118;
+      HEAP[$116]=$118;
       __label__ = 17; break;
     case 17: 
       var $120=$ret;
@@ -2708,18 +2629,18 @@ function _op_adc16($ctx, $src, $val) {
       var $125=(($124+4)|0);
       var $126=(($125+96)|0);
       var $127=$126;
-      var $128=HEAP32[(($127)>>2)];
+      var $128=HEAP[$127];
       var $129=$128 | 4;
-      HEAP32[(($127)>>2)]=$129;
+      HEAP[$127]=$129;
       __label__ = 20; break;
     case 19: 
       var $131=$1;
       var $132=(($131+4)|0);
       var $133=(($132+96)|0);
       var $134=$133;
-      var $135=HEAP32[(($134)>>2)];
+      var $135=HEAP[$134];
       var $136=$135 & -5;
-      HEAP32[(($134)>>2)]=$136;
+      HEAP[$134]=$136;
       __label__ = 20; break;
     case 20: 
       var $138=$ret;
@@ -2748,7 +2669,7 @@ function _op_adc32($ctx, $src, $val) {
       var $5=(($4+4)|0);
       var $6=(($5+96)|0);
       var $7=$6;
-      var $8=HEAP32[(($7)>>2)];
+      var $8=HEAP[$7];
       var $9=$8 & 1;
       var $10=(($9) & 255);
       var $11=(($10)&255);
@@ -2769,9 +2690,9 @@ function _op_adc32($ctx, $src, $val) {
       var $22=(($21+4)|0);
       var $23=(($22+96)|0);
       var $24=$23;
-      var $25=HEAP32[(($24)>>2)];
+      var $25=HEAP[$24];
       var $26=$25 | 2049;
-      HEAP32[(($24)>>2)]=$26;
+      HEAP[$24]=$26;
       __label__ = 8; break;
     case 4: 
       var $28=$2;
@@ -2789,18 +2710,18 @@ function _op_adc32($ctx, $src, $val) {
       var $38=(($37+4)|0);
       var $39=(($38+96)|0);
       var $40=$39;
-      var $41=HEAP32[(($40)>>2)];
+      var $41=HEAP[$40];
       var $42=$41 | 2049;
-      HEAP32[(($40)>>2)]=$42;
+      HEAP[$40]=$42;
       __label__ = 7; break;
     case 6: 
       var $44=$1;
       var $45=(($44+4)|0);
       var $46=(($45+96)|0);
       var $47=$46;
-      var $48=HEAP32[(($47)>>2)];
+      var $48=HEAP[$47];
       var $49=$48 & -2050;
-      HEAP32[(($47)>>2)]=$49;
+      HEAP[$47]=$49;
       __label__ = 7; break;
     case 7: 
       __label__ = 8; break;
@@ -2814,18 +2735,18 @@ function _op_adc32($ctx, $src, $val) {
       var $57=(($56+4)|0);
       var $58=(($57+96)|0);
       var $59=$58;
-      var $60=HEAP32[(($59)>>2)];
+      var $60=HEAP[$59];
       var $61=$60 | 128;
-      HEAP32[(($59)>>2)]=$61;
+      HEAP[$59]=$61;
       __label__ = 11; break;
     case 10: 
       var $63=$1;
       var $64=(($63+4)|0);
       var $65=(($64+96)|0);
       var $66=$65;
-      var $67=HEAP32[(($66)>>2)];
+      var $67=HEAP[$66];
       var $68=$67 & -129;
-      HEAP32[(($66)>>2)]=$68;
+      HEAP[$66]=$68;
       __label__ = 11; break;
     case 11: 
       var $70=$ret;
@@ -2836,18 +2757,18 @@ function _op_adc32($ctx, $src, $val) {
       var $74=(($73+4)|0);
       var $75=(($74+96)|0);
       var $76=$75;
-      var $77=HEAP32[(($76)>>2)];
+      var $77=HEAP[$76];
       var $78=$77 | 64;
-      HEAP32[(($76)>>2)]=$78;
+      HEAP[$76]=$78;
       __label__ = 14; break;
     case 13: 
       var $80=$1;
       var $81=(($80+4)|0);
       var $82=(($81+96)|0);
       var $83=$82;
-      var $84=HEAP32[(($83)>>2)];
+      var $84=HEAP[$83];
       var $85=$84 & -65;
-      HEAP32[(($83)>>2)]=$85;
+      HEAP[$83]=$85;
       __label__ = 14; break;
     case 14: 
       var $87=$3;
@@ -2862,18 +2783,18 @@ function _op_adc32($ctx, $src, $val) {
       var $95=(($94+4)|0);
       var $96=(($95+96)|0);
       var $97=$96;
-      var $98=HEAP32[(($97)>>2)];
+      var $98=HEAP[$97];
       var $99=$98 | 16;
-      HEAP32[(($97)>>2)]=$99;
+      HEAP[$97]=$99;
       __label__ = 17; break;
     case 16: 
       var $101=$1;
       var $102=(($101+4)|0);
       var $103=(($102+96)|0);
       var $104=$103;
-      var $105=HEAP32[(($104)>>2)];
+      var $105=HEAP[$104];
       var $106=$105 & -17;
-      HEAP32[(($104)>>2)]=$106;
+      HEAP[$104]=$106;
       __label__ = 17; break;
     case 17: 
       var $108=$ret;
@@ -2886,18 +2807,18 @@ function _op_adc32($ctx, $src, $val) {
       var $114=(($113+4)|0);
       var $115=(($114+96)|0);
       var $116=$115;
-      var $117=HEAP32[(($116)>>2)];
+      var $117=HEAP[$116];
       var $118=$117 | 4;
-      HEAP32[(($116)>>2)]=$118;
+      HEAP[$116]=$118;
       __label__ = 20; break;
     case 19: 
       var $120=$1;
       var $121=(($120+4)|0);
       var $122=(($121+96)|0);
       var $123=$122;
-      var $124=HEAP32[(($123)>>2)];
+      var $124=HEAP[$123];
       var $125=$124 & -5;
-      HEAP32[(($123)>>2)]=$125;
+      HEAP[$123]=$125;
       __label__ = 20; break;
     case 20: 
       var $127=$ret;
@@ -2939,18 +2860,18 @@ function _op_sub8($ctx, $src, $val) {
       var $17=(($16+4)|0);
       var $18=(($17+96)|0);
       var $19=$18;
-      var $20=HEAP32[(($19)>>2)];
+      var $20=HEAP[$19];
       var $21=$20 | 2049;
-      HEAP32[(($19)>>2)]=$21;
+      HEAP[$19]=$21;
       __label__ = 4; break;
     case 3: 
       var $23=$1;
       var $24=(($23+4)|0);
       var $25=(($24+96)|0);
       var $26=$25;
-      var $27=HEAP32[(($26)>>2)];
+      var $27=HEAP[$26];
       var $28=$27 & -2050;
-      HEAP32[(($26)>>2)]=$28;
+      HEAP[$26]=$28;
       __label__ = 4; break;
     case 4: 
       var $30=$ret;
@@ -2963,18 +2884,18 @@ function _op_sub8($ctx, $src, $val) {
       var $36=(($35+4)|0);
       var $37=(($36+96)|0);
       var $38=$37;
-      var $39=HEAP32[(($38)>>2)];
+      var $39=HEAP[$38];
       var $40=$39 | 128;
-      HEAP32[(($38)>>2)]=$40;
+      HEAP[$38]=$40;
       __label__ = 7; break;
     case 6: 
       var $42=$1;
       var $43=(($42+4)|0);
       var $44=(($43+96)|0);
       var $45=$44;
-      var $46=HEAP32[(($45)>>2)];
+      var $46=HEAP[$45];
       var $47=$46 & -129;
-      HEAP32[(($45)>>2)]=$47;
+      HEAP[$45]=$47;
       __label__ = 7; break;
     case 7: 
       var $49=$ret;
@@ -2985,18 +2906,18 @@ function _op_sub8($ctx, $src, $val) {
       var $53=(($52+4)|0);
       var $54=(($53+96)|0);
       var $55=$54;
-      var $56=HEAP32[(($55)>>2)];
+      var $56=HEAP[$55];
       var $57=$56 | 64;
-      HEAP32[(($55)>>2)]=$57;
+      HEAP[$55]=$57;
       __label__ = 10; break;
     case 9: 
       var $59=$1;
       var $60=(($59+4)|0);
       var $61=(($60+96)|0);
       var $62=$61;
-      var $63=HEAP32[(($62)>>2)];
+      var $63=HEAP[$62];
       var $64=$63 & -65;
-      HEAP32[(($62)>>2)]=$64;
+      HEAP[$62]=$64;
       __label__ = 10; break;
     case 10: 
       var $66=$3;
@@ -3012,18 +2933,18 @@ function _op_sub8($ctx, $src, $val) {
       var $75=(($74+4)|0);
       var $76=(($75+96)|0);
       var $77=$76;
-      var $78=HEAP32[(($77)>>2)];
+      var $78=HEAP[$77];
       var $79=$78 | 16;
-      HEAP32[(($77)>>2)]=$79;
+      HEAP[$77]=$79;
       __label__ = 13; break;
     case 12: 
       var $81=$1;
       var $82=(($81+4)|0);
       var $83=(($82+96)|0);
       var $84=$83;
-      var $85=HEAP32[(($84)>>2)];
+      var $85=HEAP[$84];
       var $86=$85 & -17;
-      HEAP32[(($84)>>2)]=$86;
+      HEAP[$84]=$86;
       __label__ = 13; break;
     case 13: 
       var $88=$ret;
@@ -3035,18 +2956,18 @@ function _op_sub8($ctx, $src, $val) {
       var $93=(($92+4)|0);
       var $94=(($93+96)|0);
       var $95=$94;
-      var $96=HEAP32[(($95)>>2)];
+      var $96=HEAP[$95];
       var $97=$96 | 4;
-      HEAP32[(($95)>>2)]=$97;
+      HEAP[$95]=$97;
       __label__ = 16; break;
     case 15: 
       var $99=$1;
       var $100=(($99+4)|0);
       var $101=(($100+96)|0);
       var $102=$101;
-      var $103=HEAP32[(($102)>>2)];
+      var $103=HEAP[$102];
       var $104=$103 & -5;
-      HEAP32[(($102)>>2)]=$104;
+      HEAP[$102]=$104;
       __label__ = 16; break;
     case 16: 
       var $106=$ret;
@@ -3088,18 +3009,18 @@ function _op_sub16($ctx, $src, $val) {
       var $17=(($16+4)|0);
       var $18=(($17+96)|0);
       var $19=$18;
-      var $20=HEAP32[(($19)>>2)];
+      var $20=HEAP[$19];
       var $21=$20 | 2049;
-      HEAP32[(($19)>>2)]=$21;
+      HEAP[$19]=$21;
       __label__ = 4; break;
     case 3: 
       var $23=$1;
       var $24=(($23+4)|0);
       var $25=(($24+96)|0);
       var $26=$25;
-      var $27=HEAP32[(($26)>>2)];
+      var $27=HEAP[$26];
       var $28=$27 & -2050;
-      HEAP32[(($26)>>2)]=$28;
+      HEAP[$26]=$28;
       __label__ = 4; break;
     case 4: 
       var $30=$ret;
@@ -3112,18 +3033,18 @@ function _op_sub16($ctx, $src, $val) {
       var $36=(($35+4)|0);
       var $37=(($36+96)|0);
       var $38=$37;
-      var $39=HEAP32[(($38)>>2)];
+      var $39=HEAP[$38];
       var $40=$39 | 128;
-      HEAP32[(($38)>>2)]=$40;
+      HEAP[$38]=$40;
       __label__ = 7; break;
     case 6: 
       var $42=$1;
       var $43=(($42+4)|0);
       var $44=(($43+96)|0);
       var $45=$44;
-      var $46=HEAP32[(($45)>>2)];
+      var $46=HEAP[$45];
       var $47=$46 & -129;
-      HEAP32[(($45)>>2)]=$47;
+      HEAP[$45]=$47;
       __label__ = 7; break;
     case 7: 
       var $49=$ret;
@@ -3134,18 +3055,18 @@ function _op_sub16($ctx, $src, $val) {
       var $53=(($52+4)|0);
       var $54=(($53+96)|0);
       var $55=$54;
-      var $56=HEAP32[(($55)>>2)];
+      var $56=HEAP[$55];
       var $57=$56 | 64;
-      HEAP32[(($55)>>2)]=$57;
+      HEAP[$55]=$57;
       __label__ = 10; break;
     case 9: 
       var $59=$1;
       var $60=(($59+4)|0);
       var $61=(($60+96)|0);
       var $62=$61;
-      var $63=HEAP32[(($62)>>2)];
+      var $63=HEAP[$62];
       var $64=$63 & -65;
-      HEAP32[(($62)>>2)]=$64;
+      HEAP[$62]=$64;
       __label__ = 10; break;
     case 10: 
       var $66=$3;
@@ -3161,18 +3082,18 @@ function _op_sub16($ctx, $src, $val) {
       var $75=(($74+4)|0);
       var $76=(($75+96)|0);
       var $77=$76;
-      var $78=HEAP32[(($77)>>2)];
+      var $78=HEAP[$77];
       var $79=$78 | 16;
-      HEAP32[(($77)>>2)]=$79;
+      HEAP[$77]=$79;
       __label__ = 13; break;
     case 12: 
       var $81=$1;
       var $82=(($81+4)|0);
       var $83=(($82+96)|0);
       var $84=$83;
-      var $85=HEAP32[(($84)>>2)];
+      var $85=HEAP[$84];
       var $86=$85 & -17;
-      HEAP32[(($84)>>2)]=$86;
+      HEAP[$84]=$86;
       __label__ = 13; break;
     case 13: 
       var $88=$ret;
@@ -3184,18 +3105,18 @@ function _op_sub16($ctx, $src, $val) {
       var $93=(($92+4)|0);
       var $94=(($93+96)|0);
       var $95=$94;
-      var $96=HEAP32[(($95)>>2)];
+      var $96=HEAP[$95];
       var $97=$96 | 4;
-      HEAP32[(($95)>>2)]=$97;
+      HEAP[$95]=$97;
       __label__ = 16; break;
     case 15: 
       var $99=$1;
       var $100=(($99+4)|0);
       var $101=(($100+96)|0);
       var $102=$101;
-      var $103=HEAP32[(($102)>>2)];
+      var $103=HEAP[$102];
       var $104=$103 & -5;
-      HEAP32[(($102)>>2)]=$104;
+      HEAP[$102]=$104;
       __label__ = 16; break;
     case 16: 
       var $106=$ret;
@@ -3232,18 +3153,18 @@ function _op_sub32($ctx, $src, $val) {
       var $12=(($11+4)|0);
       var $13=(($12+96)|0);
       var $14=$13;
-      var $15=HEAP32[(($14)>>2)];
+      var $15=HEAP[$14];
       var $16=$15 | 2049;
-      HEAP32[(($14)>>2)]=$16;
+      HEAP[$14]=$16;
       __label__ = 4; break;
     case 3: 
       var $18=$1;
       var $19=(($18+4)|0);
       var $20=(($19+96)|0);
       var $21=$20;
-      var $22=HEAP32[(($21)>>2)];
+      var $22=HEAP[$21];
       var $23=$22 & -2050;
-      HEAP32[(($21)>>2)]=$23;
+      HEAP[$21]=$23;
       __label__ = 4; break;
     case 4: 
       var $25=$ret;
@@ -3255,18 +3176,18 @@ function _op_sub32($ctx, $src, $val) {
       var $30=(($29+4)|0);
       var $31=(($30+96)|0);
       var $32=$31;
-      var $33=HEAP32[(($32)>>2)];
+      var $33=HEAP[$32];
       var $34=$33 | 128;
-      HEAP32[(($32)>>2)]=$34;
+      HEAP[$32]=$34;
       __label__ = 7; break;
     case 6: 
       var $36=$1;
       var $37=(($36+4)|0);
       var $38=(($37+96)|0);
       var $39=$38;
-      var $40=HEAP32[(($39)>>2)];
+      var $40=HEAP[$39];
       var $41=$40 & -129;
-      HEAP32[(($39)>>2)]=$41;
+      HEAP[$39]=$41;
       __label__ = 7; break;
     case 7: 
       var $43=$ret;
@@ -3277,18 +3198,18 @@ function _op_sub32($ctx, $src, $val) {
       var $47=(($46+4)|0);
       var $48=(($47+96)|0);
       var $49=$48;
-      var $50=HEAP32[(($49)>>2)];
+      var $50=HEAP[$49];
       var $51=$50 | 64;
-      HEAP32[(($49)>>2)]=$51;
+      HEAP[$49]=$51;
       __label__ = 10; break;
     case 9: 
       var $53=$1;
       var $54=(($53+4)|0);
       var $55=(($54+96)|0);
       var $56=$55;
-      var $57=HEAP32[(($56)>>2)];
+      var $57=HEAP[$56];
       var $58=$57 & -65;
-      HEAP32[(($56)>>2)]=$58;
+      HEAP[$56]=$58;
       __label__ = 10; break;
     case 10: 
       var $60=$3;
@@ -3302,18 +3223,18 @@ function _op_sub32($ctx, $src, $val) {
       var $67=(($66+4)|0);
       var $68=(($67+96)|0);
       var $69=$68;
-      var $70=HEAP32[(($69)>>2)];
+      var $70=HEAP[$69];
       var $71=$70 | 16;
-      HEAP32[(($69)>>2)]=$71;
+      HEAP[$69]=$71;
       __label__ = 13; break;
     case 12: 
       var $73=$1;
       var $74=(($73+4)|0);
       var $75=(($74+96)|0);
       var $76=$75;
-      var $77=HEAP32[(($76)>>2)];
+      var $77=HEAP[$76];
       var $78=$77 & -17;
-      HEAP32[(($76)>>2)]=$78;
+      HEAP[$76]=$78;
       __label__ = 13; break;
     case 13: 
       var $80=$ret;
@@ -3326,18 +3247,18 @@ function _op_sub32($ctx, $src, $val) {
       var $86=(($85+4)|0);
       var $87=(($86+96)|0);
       var $88=$87;
-      var $89=HEAP32[(($88)>>2)];
+      var $89=HEAP[$88];
       var $90=$89 | 4;
-      HEAP32[(($88)>>2)]=$90;
+      HEAP[$88]=$90;
       __label__ = 16; break;
     case 15: 
       var $92=$1;
       var $93=(($92+4)|0);
       var $94=(($93+96)|0);
       var $95=$94;
-      var $96=HEAP32[(($95)>>2)];
+      var $96=HEAP[$95];
       var $97=$96 & -5;
-      HEAP32[(($95)>>2)]=$97;
+      HEAP[$95]=$97;
       __label__ = 16; break;
     case 16: 
       var $99=$ret;
@@ -3366,7 +3287,7 @@ function _op_sbb8($ctx, $src, $val) {
       var $5=(($4+4)|0);
       var $6=(($5+96)|0);
       var $7=$6;
-      var $8=HEAP32[(($7)>>2)];
+      var $8=HEAP[$7];
       var $9=$8 & 1;
       var $10=(($9) & 255);
       var $11=(($10)&255);
@@ -3390,9 +3311,9 @@ function _op_sbb8($ctx, $src, $val) {
       var $25=(($24+4)|0);
       var $26=(($25+96)|0);
       var $27=$26;
-      var $28=HEAP32[(($27)>>2)];
+      var $28=HEAP[$27];
       var $29=$28 | 2049;
-      HEAP32[(($27)>>2)]=$29;
+      HEAP[$27]=$29;
       __label__ = 8; break;
     case 4: 
       var $31=$2;
@@ -3416,18 +3337,18 @@ function _op_sbb8($ctx, $src, $val) {
       var $47=(($46+4)|0);
       var $48=(($47+96)|0);
       var $49=$48;
-      var $50=HEAP32[(($49)>>2)];
+      var $50=HEAP[$49];
       var $51=$50 | 2049;
-      HEAP32[(($49)>>2)]=$51;
+      HEAP[$49]=$51;
       __label__ = 7; break;
     case 6: 
       var $53=$1;
       var $54=(($53+4)|0);
       var $55=(($54+96)|0);
       var $56=$55;
-      var $57=HEAP32[(($56)>>2)];
+      var $57=HEAP[$56];
       var $58=$57 & -2050;
-      HEAP32[(($56)>>2)]=$58;
+      HEAP[$56]=$58;
       __label__ = 7; break;
     case 7: 
       __label__ = 8; break;
@@ -3442,18 +3363,18 @@ function _op_sbb8($ctx, $src, $val) {
       var $67=(($66+4)|0);
       var $68=(($67+96)|0);
       var $69=$68;
-      var $70=HEAP32[(($69)>>2)];
+      var $70=HEAP[$69];
       var $71=$70 | 128;
-      HEAP32[(($69)>>2)]=$71;
+      HEAP[$69]=$71;
       __label__ = 11; break;
     case 10: 
       var $73=$1;
       var $74=(($73+4)|0);
       var $75=(($74+96)|0);
       var $76=$75;
-      var $77=HEAP32[(($76)>>2)];
+      var $77=HEAP[$76];
       var $78=$77 & -129;
-      HEAP32[(($76)>>2)]=$78;
+      HEAP[$76]=$78;
       __label__ = 11; break;
     case 11: 
       var $80=$ret;
@@ -3464,18 +3385,18 @@ function _op_sbb8($ctx, $src, $val) {
       var $84=(($83+4)|0);
       var $85=(($84+96)|0);
       var $86=$85;
-      var $87=HEAP32[(($86)>>2)];
+      var $87=HEAP[$86];
       var $88=$87 | 64;
-      HEAP32[(($86)>>2)]=$88;
+      HEAP[$86]=$88;
       __label__ = 14; break;
     case 13: 
       var $90=$1;
       var $91=(($90+4)|0);
       var $92=(($91+96)|0);
       var $93=$92;
-      var $94=HEAP32[(($93)>>2)];
+      var $94=HEAP[$93];
       var $95=$94 & -65;
-      HEAP32[(($93)>>2)]=$95;
+      HEAP[$93]=$95;
       __label__ = 14; break;
     case 14: 
       var $97=$3;
@@ -3491,18 +3412,18 @@ function _op_sbb8($ctx, $src, $val) {
       var $106=(($105+4)|0);
       var $107=(($106+96)|0);
       var $108=$107;
-      var $109=HEAP32[(($108)>>2)];
+      var $109=HEAP[$108];
       var $110=$109 | 16;
-      HEAP32[(($108)>>2)]=$110;
+      HEAP[$108]=$110;
       __label__ = 17; break;
     case 16: 
       var $112=$1;
       var $113=(($112+4)|0);
       var $114=(($113+96)|0);
       var $115=$114;
-      var $116=HEAP32[(($115)>>2)];
+      var $116=HEAP[$115];
       var $117=$116 & -17;
-      HEAP32[(($115)>>2)]=$117;
+      HEAP[$115]=$117;
       __label__ = 17; break;
     case 17: 
       var $119=$ret;
@@ -3514,18 +3435,18 @@ function _op_sbb8($ctx, $src, $val) {
       var $124=(($123+4)|0);
       var $125=(($124+96)|0);
       var $126=$125;
-      var $127=HEAP32[(($126)>>2)];
+      var $127=HEAP[$126];
       var $128=$127 | 4;
-      HEAP32[(($126)>>2)]=$128;
+      HEAP[$126]=$128;
       __label__ = 20; break;
     case 19: 
       var $130=$1;
       var $131=(($130+4)|0);
       var $132=(($131+96)|0);
       var $133=$132;
-      var $134=HEAP32[(($133)>>2)];
+      var $134=HEAP[$133];
       var $135=$134 & -5;
-      HEAP32[(($133)>>2)]=$135;
+      HEAP[$133]=$135;
       __label__ = 20; break;
     case 20: 
       var $137=$ret;
@@ -3554,7 +3475,7 @@ function _op_sbb16($ctx, $src, $val) {
       var $5=(($4+4)|0);
       var $6=(($5+96)|0);
       var $7=$6;
-      var $8=HEAP32[(($7)>>2)];
+      var $8=HEAP[$7];
       var $9=$8 & 1;
       var $10=(($9) & 255);
       var $11=(($10)&255);
@@ -3578,9 +3499,9 @@ function _op_sbb16($ctx, $src, $val) {
       var $25=(($24+4)|0);
       var $26=(($25+96)|0);
       var $27=$26;
-      var $28=HEAP32[(($27)>>2)];
+      var $28=HEAP[$27];
       var $29=$28 | 2049;
-      HEAP32[(($27)>>2)]=$29;
+      HEAP[$27]=$29;
       __label__ = 8; break;
     case 4: 
       var $31=$2;
@@ -3604,18 +3525,18 @@ function _op_sbb16($ctx, $src, $val) {
       var $47=(($46+4)|0);
       var $48=(($47+96)|0);
       var $49=$48;
-      var $50=HEAP32[(($49)>>2)];
+      var $50=HEAP[$49];
       var $51=$50 | 2049;
-      HEAP32[(($49)>>2)]=$51;
+      HEAP[$49]=$51;
       __label__ = 7; break;
     case 6: 
       var $53=$1;
       var $54=(($53+4)|0);
       var $55=(($54+96)|0);
       var $56=$55;
-      var $57=HEAP32[(($56)>>2)];
+      var $57=HEAP[$56];
       var $58=$57 & -2050;
-      HEAP32[(($56)>>2)]=$58;
+      HEAP[$56]=$58;
       __label__ = 7; break;
     case 7: 
       __label__ = 8; break;
@@ -3630,18 +3551,18 @@ function _op_sbb16($ctx, $src, $val) {
       var $67=(($66+4)|0);
       var $68=(($67+96)|0);
       var $69=$68;
-      var $70=HEAP32[(($69)>>2)];
+      var $70=HEAP[$69];
       var $71=$70 | 128;
-      HEAP32[(($69)>>2)]=$71;
+      HEAP[$69]=$71;
       __label__ = 11; break;
     case 10: 
       var $73=$1;
       var $74=(($73+4)|0);
       var $75=(($74+96)|0);
       var $76=$75;
-      var $77=HEAP32[(($76)>>2)];
+      var $77=HEAP[$76];
       var $78=$77 & -129;
-      HEAP32[(($76)>>2)]=$78;
+      HEAP[$76]=$78;
       __label__ = 11; break;
     case 11: 
       var $80=$ret;
@@ -3652,18 +3573,18 @@ function _op_sbb16($ctx, $src, $val) {
       var $84=(($83+4)|0);
       var $85=(($84+96)|0);
       var $86=$85;
-      var $87=HEAP32[(($86)>>2)];
+      var $87=HEAP[$86];
       var $88=$87 | 64;
-      HEAP32[(($86)>>2)]=$88;
+      HEAP[$86]=$88;
       __label__ = 14; break;
     case 13: 
       var $90=$1;
       var $91=(($90+4)|0);
       var $92=(($91+96)|0);
       var $93=$92;
-      var $94=HEAP32[(($93)>>2)];
+      var $94=HEAP[$93];
       var $95=$94 & -65;
-      HEAP32[(($93)>>2)]=$95;
+      HEAP[$93]=$95;
       __label__ = 14; break;
     case 14: 
       var $97=$3;
@@ -3679,18 +3600,18 @@ function _op_sbb16($ctx, $src, $val) {
       var $106=(($105+4)|0);
       var $107=(($106+96)|0);
       var $108=$107;
-      var $109=HEAP32[(($108)>>2)];
+      var $109=HEAP[$108];
       var $110=$109 | 16;
-      HEAP32[(($108)>>2)]=$110;
+      HEAP[$108]=$110;
       __label__ = 17; break;
     case 16: 
       var $112=$1;
       var $113=(($112+4)|0);
       var $114=(($113+96)|0);
       var $115=$114;
-      var $116=HEAP32[(($115)>>2)];
+      var $116=HEAP[$115];
       var $117=$116 & -17;
-      HEAP32[(($115)>>2)]=$117;
+      HEAP[$115]=$117;
       __label__ = 17; break;
     case 17: 
       var $119=$ret;
@@ -3702,18 +3623,18 @@ function _op_sbb16($ctx, $src, $val) {
       var $124=(($123+4)|0);
       var $125=(($124+96)|0);
       var $126=$125;
-      var $127=HEAP32[(($126)>>2)];
+      var $127=HEAP[$126];
       var $128=$127 | 4;
-      HEAP32[(($126)>>2)]=$128;
+      HEAP[$126]=$128;
       __label__ = 20; break;
     case 19: 
       var $130=$1;
       var $131=(($130+4)|0);
       var $132=(($131+96)|0);
       var $133=$132;
-      var $134=HEAP32[(($133)>>2)];
+      var $134=HEAP[$133];
       var $135=$134 & -5;
-      HEAP32[(($133)>>2)]=$135;
+      HEAP[$133]=$135;
       __label__ = 20; break;
     case 20: 
       var $137=$ret;
@@ -3742,7 +3663,7 @@ function _op_sbb32($ctx, $src, $val) {
       var $5=(($4+4)|0);
       var $6=(($5+96)|0);
       var $7=$6;
-      var $8=HEAP32[(($7)>>2)];
+      var $8=HEAP[$7];
       var $9=$8 & 1;
       var $10=(($9) & 255);
       var $11=(($10)&255);
@@ -3763,9 +3684,9 @@ function _op_sbb32($ctx, $src, $val) {
       var $22=(($21+4)|0);
       var $23=(($22+96)|0);
       var $24=$23;
-      var $25=HEAP32[(($24)>>2)];
+      var $25=HEAP[$24];
       var $26=$25 | 2049;
-      HEAP32[(($24)>>2)]=$26;
+      HEAP[$24]=$26;
       __label__ = 8; break;
     case 4: 
       var $28=$2;
@@ -3783,18 +3704,18 @@ function _op_sbb32($ctx, $src, $val) {
       var $38=(($37+4)|0);
       var $39=(($38+96)|0);
       var $40=$39;
-      var $41=HEAP32[(($40)>>2)];
+      var $41=HEAP[$40];
       var $42=$41 | 2049;
-      HEAP32[(($40)>>2)]=$42;
+      HEAP[$40]=$42;
       __label__ = 7; break;
     case 6: 
       var $44=$1;
       var $45=(($44+4)|0);
       var $46=(($45+96)|0);
       var $47=$46;
-      var $48=HEAP32[(($47)>>2)];
+      var $48=HEAP[$47];
       var $49=$48 & -2050;
-      HEAP32[(($47)>>2)]=$49;
+      HEAP[$47]=$49;
       __label__ = 7; break;
     case 7: 
       __label__ = 8; break;
@@ -3808,18 +3729,18 @@ function _op_sbb32($ctx, $src, $val) {
       var $57=(($56+4)|0);
       var $58=(($57+96)|0);
       var $59=$58;
-      var $60=HEAP32[(($59)>>2)];
+      var $60=HEAP[$59];
       var $61=$60 | 128;
-      HEAP32[(($59)>>2)]=$61;
+      HEAP[$59]=$61;
       __label__ = 11; break;
     case 10: 
       var $63=$1;
       var $64=(($63+4)|0);
       var $65=(($64+96)|0);
       var $66=$65;
-      var $67=HEAP32[(($66)>>2)];
+      var $67=HEAP[$66];
       var $68=$67 & -129;
-      HEAP32[(($66)>>2)]=$68;
+      HEAP[$66]=$68;
       __label__ = 11; break;
     case 11: 
       var $70=$ret;
@@ -3830,18 +3751,18 @@ function _op_sbb32($ctx, $src, $val) {
       var $74=(($73+4)|0);
       var $75=(($74+96)|0);
       var $76=$75;
-      var $77=HEAP32[(($76)>>2)];
+      var $77=HEAP[$76];
       var $78=$77 | 64;
-      HEAP32[(($76)>>2)]=$78;
+      HEAP[$76]=$78;
       __label__ = 14; break;
     case 13: 
       var $80=$1;
       var $81=(($80+4)|0);
       var $82=(($81+96)|0);
       var $83=$82;
-      var $84=HEAP32[(($83)>>2)];
+      var $84=HEAP[$83];
       var $85=$84 & -65;
-      HEAP32[(($83)>>2)]=$85;
+      HEAP[$83]=$85;
       __label__ = 14; break;
     case 14: 
       var $87=$3;
@@ -3855,18 +3776,18 @@ function _op_sbb32($ctx, $src, $val) {
       var $94=(($93+4)|0);
       var $95=(($94+96)|0);
       var $96=$95;
-      var $97=HEAP32[(($96)>>2)];
+      var $97=HEAP[$96];
       var $98=$97 | 16;
-      HEAP32[(($96)>>2)]=$98;
+      HEAP[$96]=$98;
       __label__ = 17; break;
     case 16: 
       var $100=$1;
       var $101=(($100+4)|0);
       var $102=(($101+96)|0);
       var $103=$102;
-      var $104=HEAP32[(($103)>>2)];
+      var $104=HEAP[$103];
       var $105=$104 & -17;
-      HEAP32[(($103)>>2)]=$105;
+      HEAP[$103]=$105;
       __label__ = 17; break;
     case 17: 
       var $107=$ret;
@@ -3879,18 +3800,18 @@ function _op_sbb32($ctx, $src, $val) {
       var $113=(($112+4)|0);
       var $114=(($113+96)|0);
       var $115=$114;
-      var $116=HEAP32[(($115)>>2)];
+      var $116=HEAP[$115];
       var $117=$116 | 4;
-      HEAP32[(($115)>>2)]=$117;
+      HEAP[$115]=$117;
       __label__ = 20; break;
     case 19: 
       var $119=$1;
       var $120=(($119+4)|0);
       var $121=(($120+96)|0);
       var $122=$121;
-      var $123=HEAP32[(($122)>>2)];
+      var $123=HEAP[$122];
       var $124=$123 & -5;
-      HEAP32[(($122)>>2)]=$124;
+      HEAP[$122]=$124;
       __label__ = 20; break;
     case 20: 
       var $126=$ret;
@@ -3981,7 +3902,7 @@ function _Sfx86OpcodeExec_add($opcode, $ctx) {
       var $50=(($49)|0);
       var $51=$50;
       var $52=(($51)|0);
-      var $53=HEAP8[($52)];
+      var $53=HEAP[$52];
       var $54=$x1;
       var $55=_op_add8($46, $53, $54);
       $x1=$55;
@@ -3992,7 +3913,7 @@ function _Sfx86OpcodeExec_add($opcode, $ctx) {
       var $60=(($59)|0);
       var $61=$60;
       var $62=(($61)|0);
-      HEAP8[($62)]=$56;
+      HEAP[$62]=$56;
       $1=1;
       __label__ = 8; break;
     case 5: 
@@ -4021,7 +3942,7 @@ function _Sfx86OpcodeExec_add($opcode, $ctx) {
       var $83=(($82)|0);
       var $84=$83;
       var $85=(($84)|0);
-      var $86=HEAP16[(($85)>>1)];
+      var $86=HEAP[$85];
       var $87=$x2;
       var $88=_op_add16($79, $86, $87);
       $x2=$88;
@@ -4032,7 +3953,7 @@ function _Sfx86OpcodeExec_add($opcode, $ctx) {
       var $93=(($92)|0);
       var $94=$93;
       var $95=(($94)|0);
-      HEAP16[(($95)>>1)]=$89;
+      HEAP[$95]=$89;
       $1=1;
       __label__ = 8; break;
     case 7: 
@@ -4115,11 +4036,11 @@ function _Sfx86OpcodeDec_add($opcode, $ctx, $buf) {
       if ($40) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
       var $42=$4;
-      var $43=_sprintf($42, ((STRING_TABLE.__str8)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op2_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op1_tmp)|0),tempInt));
+      var $43=_sprintf($42, ((STRING_TABLE.__str8)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op2_tmp)|0),HEAP[tempInt+4]=((_op1_tmp)|0),tempInt));
       __label__ = 5; break;
     case 4: 
       var $45=$4;
-      var $46=_sprintf($45, ((STRING_TABLE.__str8)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op2_tmp)|0),tempInt));
+      var $46=_sprintf($45, ((STRING_TABLE.__str8)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=((_op2_tmp)|0),tempInt));
       __label__ = 5; break;
     case 5: 
       $1=1;
@@ -4136,7 +4057,7 @@ function _Sfx86OpcodeDec_add($opcode, $ctx, $buf) {
       var $55=$4;
       var $56=$x1;
       var $57=(($56)&255);
-      var $58=_sprintf($55, ((STRING_TABLE.__str19)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$57,tempInt));
+      var $58=_sprintf($55, ((STRING_TABLE.__str19)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$57,tempInt));
       $1=1;
       __label__ = 11; break;
     case 8: 
@@ -4161,7 +4082,7 @@ function _Sfx86OpcodeDec_add($opcode, $ctx, $buf) {
       var $75=$4;
       var $76=$x2;
       var $77=(($76)&65535);
-      var $78=_sprintf($75, ((STRING_TABLE.__str210)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$77,tempInt));
+      var $78=_sprintf($75, ((STRING_TABLE.__str210)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$77,tempInt));
       $1=1;
       __label__ = 11; break;
     case 10: 
@@ -4256,7 +4177,7 @@ function _Sfx86OpcodeExec_adc($opcode, $ctx) {
       var $50=(($49)|0);
       var $51=$50;
       var $52=(($51)|0);
-      var $53=HEAP8[($52)];
+      var $53=HEAP[$52];
       var $54=$x1;
       var $55=_op_adc8($46, $53, $54);
       $x1=$55;
@@ -4267,7 +4188,7 @@ function _Sfx86OpcodeExec_adc($opcode, $ctx) {
       var $60=(($59)|0);
       var $61=$60;
       var $62=(($61)|0);
-      HEAP8[($62)]=$56;
+      HEAP[$62]=$56;
       $1=1;
       __label__ = 8; break;
     case 5: 
@@ -4296,7 +4217,7 @@ function _Sfx86OpcodeExec_adc($opcode, $ctx) {
       var $83=(($82)|0);
       var $84=$83;
       var $85=(($84)|0);
-      var $86=HEAP16[(($85)>>1)];
+      var $86=HEAP[$85];
       var $87=$x2;
       var $88=_op_adc16($79, $86, $87);
       $x2=$88;
@@ -4307,7 +4228,7 @@ function _Sfx86OpcodeExec_adc($opcode, $ctx) {
       var $93=(($92)|0);
       var $94=$93;
       var $95=(($94)|0);
-      HEAP16[(($95)>>1)]=$89;
+      HEAP[$95]=$89;
       $1=1;
       __label__ = 8; break;
     case 7: 
@@ -4390,11 +4311,11 @@ function _Sfx86OpcodeDec_adc($opcode, $ctx, $buf) {
       if ($40) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
       var $42=$4;
-      var $43=_sprintf($42, ((STRING_TABLE.__str311)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op2_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op1_tmp)|0),tempInt));
+      var $43=_sprintf($42, ((STRING_TABLE.__str311)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op2_tmp)|0),HEAP[tempInt+4]=((_op1_tmp)|0),tempInt));
       __label__ = 5; break;
     case 4: 
       var $45=$4;
-      var $46=_sprintf($45, ((STRING_TABLE.__str311)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op2_tmp)|0),tempInt));
+      var $46=_sprintf($45, ((STRING_TABLE.__str311)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=((_op2_tmp)|0),tempInt));
       __label__ = 5; break;
     case 5: 
       $1=1;
@@ -4411,7 +4332,7 @@ function _Sfx86OpcodeDec_adc($opcode, $ctx, $buf) {
       var $55=$4;
       var $56=$x1;
       var $57=(($56)&255);
-      var $58=_sprintf($55, ((STRING_TABLE.__str412)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$57,tempInt));
+      var $58=_sprintf($55, ((STRING_TABLE.__str412)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$57,tempInt));
       $1=1;
       __label__ = 11; break;
     case 8: 
@@ -4436,7 +4357,7 @@ function _Sfx86OpcodeDec_adc($opcode, $ctx, $buf) {
       var $75=$4;
       var $76=$x2;
       var $77=(($76)&65535);
-      var $78=_sprintf($75, ((STRING_TABLE.__str513)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$77,tempInt));
+      var $78=_sprintf($75, ((STRING_TABLE.__str513)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$77,tempInt));
       $1=1;
       __label__ = 11; break;
     case 10: 
@@ -4473,7 +4394,7 @@ function _Sfx86OpcodeExec_cxex($opcode, $ctx) {
       var $11=(($10)|0);
       var $12=$11;
       var $13=(($12)|0);
-      var $14=HEAPU8[($13)];
+      var $14=HEAP[$13];
       var $15=(($14)&255);
       var $16=$15 & 128;
       var $17=(($16)|0)!=0;
@@ -4485,11 +4406,11 @@ function _Sfx86OpcodeExec_cxex($opcode, $ctx) {
       var $22=(($21)|0);
       var $23=$22;
       var $24=(($23)|0);
-      var $25=HEAPU16[(($24)>>1)];
+      var $25=HEAP[$24];
       var $26=(($25)&65535);
       var $27=$26 | 65280;
       var $28=(($27) & 65535);
-      HEAP16[(($24)>>1)]=$28;
+      HEAP[$24]=$28;
       __label__ = 5; break;
     case 4: 
       var $30=$3;
@@ -4498,7 +4419,7 @@ function _Sfx86OpcodeExec_cxex($opcode, $ctx) {
       var $33=(($32)|0);
       var $34=$33;
       var $35=(($34+1)|0);
-      HEAP8[($35)]=0;
+      HEAP[$35]=0;
       __label__ = 5; break;
     case 5: 
       $1=1;
@@ -4515,7 +4436,7 @@ function _Sfx86OpcodeExec_cxex($opcode, $ctx) {
       var $45=(($44)|0);
       var $46=$45;
       var $47=(($46)|0);
-      var $48=HEAPU16[(($47)>>1)];
+      var $48=HEAP[$47];
       var $49=(($48)&65535);
       var $50=$49 & 32768;
       var $51=(($50)|0)!=0;
@@ -4527,7 +4448,7 @@ function _Sfx86OpcodeExec_cxex($opcode, $ctx) {
       var $56=(($55+8)|0);
       var $57=$56;
       var $58=(($57)|0);
-      HEAP16[(($58)>>1)]=-1;
+      HEAP[$58]=-1;
       __label__ = 10; break;
     case 9: 
       var $60=$3;
@@ -4536,7 +4457,7 @@ function _Sfx86OpcodeExec_cxex($opcode, $ctx) {
       var $63=(($62+8)|0);
       var $64=$63;
       var $65=(($64)|0);
-      HEAP16[(($65)>>1)]=0;
+      HEAP[$65]=0;
       __label__ = 10; break;
     case 10: 
       $1=1;
@@ -4633,7 +4554,7 @@ function _Sfx86OpcodeExec_sub($opcode, $ctx) {
       var $50=(($49)|0);
       var $51=$50;
       var $52=(($51)|0);
-      var $53=HEAP8[($52)];
+      var $53=HEAP[$52];
       var $54=$x1;
       var $55=_op_sub8($46, $53, $54);
       $x1=$55;
@@ -4644,7 +4565,7 @@ function _Sfx86OpcodeExec_sub($opcode, $ctx) {
       var $60=(($59)|0);
       var $61=$60;
       var $62=(($61)|0);
-      HEAP8[($62)]=$56;
+      HEAP[$62]=$56;
       $1=1;
       __label__ = 8; break;
     case 5: 
@@ -4673,7 +4594,7 @@ function _Sfx86OpcodeExec_sub($opcode, $ctx) {
       var $83=(($82)|0);
       var $84=$83;
       var $85=(($84)|0);
-      var $86=HEAP16[(($85)>>1)];
+      var $86=HEAP[$85];
       var $87=$x2;
       var $88=_op_sub16($79, $86, $87);
       $x2=$88;
@@ -4684,7 +4605,7 @@ function _Sfx86OpcodeExec_sub($opcode, $ctx) {
       var $93=(($92)|0);
       var $94=$93;
       var $95=(($94)|0);
-      HEAP16[(($95)>>1)]=$89;
+      HEAP[$95]=$89;
       $1=1;
       __label__ = 8; break;
     case 7: 
@@ -4767,11 +4688,11 @@ function _Sfx86OpcodeDec_sub($opcode, $ctx, $buf) {
       if ($40) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
       var $42=$4;
-      var $43=_sprintf($42, ((STRING_TABLE.__str614)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op2_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op1_tmp)|0),tempInt));
+      var $43=_sprintf($42, ((STRING_TABLE.__str614)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op2_tmp)|0),HEAP[tempInt+4]=((_op1_tmp)|0),tempInt));
       __label__ = 5; break;
     case 4: 
       var $45=$4;
-      var $46=_sprintf($45, ((STRING_TABLE.__str614)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op2_tmp)|0),tempInt));
+      var $46=_sprintf($45, ((STRING_TABLE.__str614)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=((_op2_tmp)|0),tempInt));
       __label__ = 5; break;
     case 5: 
       $1=1;
@@ -4788,7 +4709,7 @@ function _Sfx86OpcodeDec_sub($opcode, $ctx, $buf) {
       var $55=$4;
       var $56=$x1;
       var $57=(($56)&255);
-      var $58=_sprintf($55, ((STRING_TABLE.__str715)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$57,tempInt));
+      var $58=_sprintf($55, ((STRING_TABLE.__str715)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$57,tempInt));
       $1=1;
       __label__ = 11; break;
     case 8: 
@@ -4813,7 +4734,7 @@ function _Sfx86OpcodeDec_sub($opcode, $ctx, $buf) {
       var $75=$4;
       var $76=$x2;
       var $77=(($76)&65535);
-      var $78=_sprintf($75, ((STRING_TABLE.__str816)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$77,tempInt));
+      var $78=_sprintf($75, ((STRING_TABLE.__str816)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$77,tempInt));
       $1=1;
       __label__ = 11; break;
     case 10: 
@@ -4908,7 +4829,7 @@ function _Sfx86OpcodeExec_sbb($opcode, $ctx) {
       var $50=(($49)|0);
       var $51=$50;
       var $52=(($51)|0);
-      var $53=HEAP8[($52)];
+      var $53=HEAP[$52];
       var $54=$x1;
       var $55=_op_sbb8($46, $53, $54);
       $x1=$55;
@@ -4919,7 +4840,7 @@ function _Sfx86OpcodeExec_sbb($opcode, $ctx) {
       var $60=(($59)|0);
       var $61=$60;
       var $62=(($61)|0);
-      HEAP8[($62)]=$56;
+      HEAP[$62]=$56;
       $1=1;
       __label__ = 8; break;
     case 5: 
@@ -4948,7 +4869,7 @@ function _Sfx86OpcodeExec_sbb($opcode, $ctx) {
       var $83=(($82)|0);
       var $84=$83;
       var $85=(($84)|0);
-      var $86=HEAP16[(($85)>>1)];
+      var $86=HEAP[$85];
       var $87=$x2;
       var $88=_op_sbb16($79, $86, $87);
       $x2=$88;
@@ -4959,7 +4880,7 @@ function _Sfx86OpcodeExec_sbb($opcode, $ctx) {
       var $93=(($92)|0);
       var $94=$93;
       var $95=(($94)|0);
-      HEAP16[(($95)>>1)]=$89;
+      HEAP[$95]=$89;
       $1=1;
       __label__ = 8; break;
     case 7: 
@@ -5042,11 +4963,11 @@ function _Sfx86OpcodeDec_sbb($opcode, $ctx, $buf) {
       if ($40) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
       var $42=$4;
-      var $43=_sprintf($42, ((STRING_TABLE.__str9)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op2_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op1_tmp)|0),tempInt));
+      var $43=_sprintf($42, ((STRING_TABLE.__str9)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op2_tmp)|0),HEAP[tempInt+4]=((_op1_tmp)|0),tempInt));
       __label__ = 5; break;
     case 4: 
       var $45=$4;
-      var $46=_sprintf($45, ((STRING_TABLE.__str9)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op2_tmp)|0),tempInt));
+      var $46=_sprintf($45, ((STRING_TABLE.__str9)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=((_op2_tmp)|0),tempInt));
       __label__ = 5; break;
     case 5: 
       $1=1;
@@ -5063,7 +4984,7 @@ function _Sfx86OpcodeDec_sbb($opcode, $ctx, $buf) {
       var $55=$4;
       var $56=$x1;
       var $57=(($56)&255);
-      var $58=_sprintf($55, ((STRING_TABLE.__str10)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$57,tempInt));
+      var $58=_sprintf($55, ((STRING_TABLE.__str10)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$57,tempInt));
       $1=1;
       __label__ = 11; break;
     case 8: 
@@ -5088,7 +5009,7 @@ function _Sfx86OpcodeDec_sbb($opcode, $ctx, $buf) {
       var $75=$4;
       var $76=$x2;
       var $77=(($76)&65535);
-      var $78=_sprintf($75, ((STRING_TABLE.__str11)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$77,tempInt));
+      var $78=_sprintf($75, ((STRING_TABLE.__str11)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$77,tempInt));
       $1=1;
       __label__ = 11; break;
     case 10: 
@@ -5183,7 +5104,7 @@ function _Sfx86OpcodeExec_cmp($opcode, $ctx) {
       var $50=(($49)|0);
       var $51=$50;
       var $52=(($51)|0);
-      var $53=HEAP8[($52)];
+      var $53=HEAP[$52];
       var $54=$x1;
       var $55=_op_sub8($46, $53, $54);
       $1=1;
@@ -5214,7 +5135,7 @@ function _Sfx86OpcodeExec_cmp($opcode, $ctx) {
       var $76=(($75)|0);
       var $77=$76;
       var $78=(($77)|0);
-      var $79=HEAP16[(($78)>>1)];
+      var $79=HEAP[$78];
       var $80=$x2;
       var $81=_op_sub16($72, $79, $80);
       $1=1;
@@ -5299,11 +5220,11 @@ function _Sfx86OpcodeDec_cmp($opcode, $ctx, $buf) {
       if ($40) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
       var $42=$4;
-      var $43=_sprintf($42, ((STRING_TABLE.__str12)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op2_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op1_tmp)|0),tempInt));
+      var $43=_sprintf($42, ((STRING_TABLE.__str12)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op2_tmp)|0),HEAP[tempInt+4]=((_op1_tmp)|0),tempInt));
       __label__ = 5; break;
     case 4: 
       var $45=$4;
-      var $46=_sprintf($45, ((STRING_TABLE.__str12)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op2_tmp)|0),tempInt));
+      var $46=_sprintf($45, ((STRING_TABLE.__str12)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=((_op2_tmp)|0),tempInt));
       __label__ = 5; break;
     case 5: 
       $1=1;
@@ -5320,7 +5241,7 @@ function _Sfx86OpcodeDec_cmp($opcode, $ctx, $buf) {
       var $55=$4;
       var $56=$x1;
       var $57=(($56)&255);
-      var $58=_sprintf($55, ((STRING_TABLE.__str13)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$57,tempInt));
+      var $58=_sprintf($55, ((STRING_TABLE.__str13)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$57,tempInt));
       $1=1;
       __label__ = 11; break;
     case 8: 
@@ -5345,7 +5266,7 @@ function _Sfx86OpcodeDec_cmp($opcode, $ctx, $buf) {
       var $75=$4;
       var $76=$x2;
       var $77=(($76)&65535);
-      var $78=_sprintf($75, ((STRING_TABLE.__str14)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$77,tempInt));
+      var $78=_sprintf($75, ((STRING_TABLE.__str14)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$77,tempInt));
       $1=1;
       __label__ = 11; break;
     case 10: 
@@ -5497,9 +5418,9 @@ function _Sfx86OpcodeExec_clx($opcode, $ctx) {
       var $9=(($8+4)|0);
       var $10=(($9+96)|0);
       var $11=$10;
-      var $12=HEAP32[(($11)>>2)];
+      var $12=HEAP[$11];
       var $13=$12 ^ 1;
-      HEAP32[(($11)>>2)]=$13;
+      HEAP[$11]=$13;
       $1=1;
       __label__ = 16; break;
     case 3: 
@@ -5512,9 +5433,9 @@ function _Sfx86OpcodeExec_clx($opcode, $ctx) {
       var $20=(($19+4)|0);
       var $21=(($20+96)|0);
       var $22=$21;
-      var $23=HEAP32[(($22)>>2)];
+      var $23=HEAP[$22];
       var $24=$23 & -2;
-      HEAP32[(($22)>>2)]=$24;
+      HEAP[$22]=$24;
       $1=1;
       __label__ = 16; break;
     case 5: 
@@ -5527,9 +5448,9 @@ function _Sfx86OpcodeExec_clx($opcode, $ctx) {
       var $31=(($30+4)|0);
       var $32=(($31+96)|0);
       var $33=$32;
-      var $34=HEAP32[(($33)>>2)];
+      var $34=HEAP[$33];
       var $35=$34 | 1;
-      HEAP32[(($33)>>2)]=$35;
+      HEAP[$33]=$35;
       $1=1;
       __label__ = 16; break;
     case 7: 
@@ -5542,9 +5463,9 @@ function _Sfx86OpcodeExec_clx($opcode, $ctx) {
       var $42=(($41+4)|0);
       var $43=(($42+96)|0);
       var $44=$43;
-      var $45=HEAP32[(($44)>>2)];
+      var $45=HEAP[$44];
       var $46=$45 & -513;
-      HEAP32[(($44)>>2)]=$46;
+      HEAP[$44]=$46;
       $1=1;
       __label__ = 16; break;
     case 9: 
@@ -5557,9 +5478,9 @@ function _Sfx86OpcodeExec_clx($opcode, $ctx) {
       var $53=(($52+4)|0);
       var $54=(($53+96)|0);
       var $55=$54;
-      var $56=HEAP32[(($55)>>2)];
+      var $56=HEAP[$55];
       var $57=$56 | 512;
-      HEAP32[(($55)>>2)]=$57;
+      HEAP[$55]=$57;
       $1=1;
       __label__ = 16; break;
     case 11: 
@@ -5572,9 +5493,9 @@ function _Sfx86OpcodeExec_clx($opcode, $ctx) {
       var $64=(($63+4)|0);
       var $65=(($64+96)|0);
       var $66=$65;
-      var $67=HEAP32[(($66)>>2)];
+      var $67=HEAP[$66];
       var $68=$67 & -1025;
-      HEAP32[(($66)>>2)]=$68;
+      HEAP[$66]=$68;
       $1=1;
       __label__ = 16; break;
     case 13: 
@@ -5587,9 +5508,9 @@ function _Sfx86OpcodeExec_clx($opcode, $ctx) {
       var $75=(($74+4)|0);
       var $76=(($75+96)|0);
       var $77=$76;
-      var $78=HEAP32[(($77)>>2)];
+      var $78=HEAP[$77];
       var $79=$78 | 1024;
-      HEAP32[(($77)>>2)]=$79;
+      HEAP[$77]=$79;
       $1=1;
       __label__ = 16; break;
     case 15: 
@@ -5631,7 +5552,7 @@ function _Sfx86OpcodeExec_duhhh($opcode, $ctx) {
       var $13=$3;
       var $14=(($13+4)|0);
       var $15=(($14+120)|0);
-      var $16=HEAPU8[($15)];
+      var $16=HEAP[$15];
       var $17=(($16)&255);
       var $18=(($17)|0)!=0;
       if ($18) { __label__ = 6; break; } else { __label__ = 5; break; }
@@ -5639,7 +5560,7 @@ function _Sfx86OpcodeExec_duhhh($opcode, $ctx) {
       var $20=$3;
       var $21=(($20+4)|0);
       var $22=(($21+122)|0);
-      var $23=HEAPU8[($22)];
+      var $23=HEAP[$22];
       var $24=(($23)&255);
       var $25=(($24)|0)!=0;
       if ($25) { __label__ = 6; break; } else { __label__ = 7; break; }
@@ -5673,7 +5594,7 @@ function _Sfx86OpcodeDec_default($opcode, $ctx, $buf) {
   $3=$buf;
   var $4=$3;
   var $5=(($4)|0);
-  HEAP8[($5)]=0;
+  HEAP[$5]=0;
   ;
   return 0;
 }
@@ -5697,16 +5618,16 @@ function _Sfx86OpcodeExec_segover($opcode, $ctx) {
     case 2: 
       var $8=$3;
       var $9=(($8+236)|0);
-      HEAP8[($9)]=1;
+      HEAP[$9]=1;
       var $10=$3;
       var $11=(($10+4)|0);
       var $12=(($11+32)|0);
       var $13=(($12)|0);
       var $14=(($13)|0);
-      var $15=HEAP16[(($14)>>1)];
+      var $15=HEAP[$14];
       var $16=$3;
       var $17=(($16+238)|0);
-      HEAP16[(($17)>>1)]=$15;
+      HEAP[$17]=$15;
       $1=2;
       __label__ = 10; break;
     case 3: 
@@ -5717,16 +5638,16 @@ function _Sfx86OpcodeExec_segover($opcode, $ctx) {
     case 4: 
       var $23=$3;
       var $24=(($23+236)|0);
-      HEAP8[($24)]=1;
+      HEAP[$24]=1;
       var $25=$3;
       var $26=(($25+4)|0);
       var $27=(($26+32)|0);
       var $28=(($27+8)|0);
       var $29=(($28)|0);
-      var $30=HEAP16[(($29)>>1)];
+      var $30=HEAP[$29];
       var $31=$3;
       var $32=(($31+238)|0);
-      HEAP16[(($32)>>1)]=$30;
+      HEAP[$32]=$30;
       $1=2;
       __label__ = 10; break;
     case 5: 
@@ -5737,16 +5658,16 @@ function _Sfx86OpcodeExec_segover($opcode, $ctx) {
     case 6: 
       var $38=$3;
       var $39=(($38+236)|0);
-      HEAP8[($39)]=1;
+      HEAP[$39]=1;
       var $40=$3;
       var $41=(($40+4)|0);
       var $42=(($41+32)|0);
       var $43=(($42+16)|0);
       var $44=(($43)|0);
-      var $45=HEAP16[(($44)>>1)];
+      var $45=HEAP[$44];
       var $46=$3;
       var $47=(($46+238)|0);
-      HEAP16[(($47)>>1)]=$45;
+      HEAP[$47]=$45;
       $1=2;
       __label__ = 10; break;
     case 7: 
@@ -5757,16 +5678,16 @@ function _Sfx86OpcodeExec_segover($opcode, $ctx) {
     case 8: 
       var $53=$3;
       var $54=(($53+236)|0);
-      HEAP8[($54)]=1;
+      HEAP[$54]=1;
       var $55=$3;
       var $56=(($55+4)|0);
       var $57=(($56+32)|0);
       var $58=(($57+24)|0);
       var $59=(($58)|0);
-      var $60=HEAP16[(($59)>>1)];
+      var $60=HEAP[$59];
       var $61=$3;
       var $62=(($61+238)|0);
-      HEAP16[(($62)>>1)]=$60;
+      HEAP[$62]=$60;
       $1=2;
       __label__ = 10; break;
     case 9: 
@@ -5794,7 +5715,7 @@ function _Sfx86OpcodeExec_repetition($opcode, $ctx) {
       $3=$ctx;
       var $4=$3;
       var $5=(($4+240)|0);
-      var $6=HEAPU8[($5)];
+      var $6=HEAP[$5];
       var $7=(($6)&255);
       var $8=(($7)|0) > 0;
       if ($8) { __label__ = 2; break; } else { __label__ = 3; break; }
@@ -5809,7 +5730,7 @@ function _Sfx86OpcodeExec_repetition($opcode, $ctx) {
     case 4: 
       var $15=$3;
       var $16=(($15+240)|0);
-      HEAP8[($16)]=2;
+      HEAP[$16]=2;
       $1=2;
       __label__ = 8; break;
     case 5: 
@@ -5820,7 +5741,7 @@ function _Sfx86OpcodeExec_repetition($opcode, $ctx) {
     case 6: 
       var $22=$3;
       var $23=(($22+240)|0);
-      HEAP8[($23)]=1;
+      HEAP[$23]=1;
       $1=2;
       __label__ = 8; break;
     case 7: 
@@ -6295,7 +6216,7 @@ function _Sfx86OpcodeExec_returns($opcode, $ctx) {
       var $103=(($102+4)|0);
       var $104=(($103+96)|0);
       var $105=$104;
-      HEAP32[(($105)>>2)]=$101;
+      HEAP[$105]=$101;
       $1=1;
       __label__ = 12; break;
     case 11: 
@@ -6346,7 +6267,7 @@ function _Sfx86OpcodeDec_returns($opcode, $ctx, $buf) {
       var $20=$4;
       var $21=$popeye;
       var $22=(($21)&65535);
-      var $23=_sprintf($20, ((STRING_TABLE.__str72)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$22,tempInt));
+      var $23=_sprintf($20, ((STRING_TABLE.__str72)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$22,tempInt));
       $1=1;
       __label__ = 12; break;
     case 3: 
@@ -6381,7 +6302,7 @@ function _Sfx86OpcodeDec_returns($opcode, $ctx, $buf) {
       var $47=$4;
       var $48=$popeye1;
       var $49=(($48)&65535);
-      var $50=_sprintf($47, ((STRING_TABLE.__str274)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$49,tempInt));
+      var $50=_sprintf($47, ((STRING_TABLE.__str274)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$49,tempInt));
       $1=1;
       __label__ = 12; break;
     case 7: 
@@ -6437,18 +6358,18 @@ function _Sfx86OpcodeExec_ahf($opcode, $ctx) {
       var $10=(($9+96)|0);
       var $11=$10;
       var $12=(($11)|0);
-      var $13=HEAPU8[($12)];
+      var $13=HEAP[$12];
       var $14=(($13)&255);
       var $15=$14 & -214;
       var $16=(($15) & 255);
-      HEAP8[($12)]=$16;
+      HEAP[$12]=$16;
       var $17=$3;
       var $18=(($17+4)|0);
       var $19=(($18)|0);
       var $20=(($19)|0);
       var $21=$20;
       var $22=(($21+1)|0);
-      var $23=HEAPU8[($22)];
+      var $23=HEAP[$22];
       var $24=(($23)&255);
       var $25=$24 & 213;
       var $26=$3;
@@ -6456,11 +6377,11 @@ function _Sfx86OpcodeExec_ahf($opcode, $ctx) {
       var $28=(($27+96)|0);
       var $29=$28;
       var $30=(($29)|0);
-      var $31=HEAPU8[($30)];
+      var $31=HEAP[$30];
       var $32=(($31)&255);
       var $33=$32 | $25;
       var $34=(($33) & 255);
-      HEAP8[($30)]=$34;
+      HEAP[$30]=$34;
       $1=1;
       __label__ = 6; break;
     case 3: 
@@ -6474,14 +6395,14 @@ function _Sfx86OpcodeExec_ahf($opcode, $ctx) {
       var $42=(($41+96)|0);
       var $43=$42;
       var $44=(($43)|0);
-      var $45=HEAP8[($44)];
+      var $45=HEAP[$44];
       var $46=$3;
       var $47=(($46+4)|0);
       var $48=(($47)|0);
       var $49=(($48)|0);
       var $50=$49;
       var $51=(($50+1)|0);
-      HEAP8[($51)]=$45;
+      HEAP[$51]=$45;
       $1=1;
       __label__ = 6; break;
     case 5: 
@@ -6518,7 +6439,7 @@ function _Sfx86OpcodeExec_enterleave($opcode, $ctx) {
     case 2: 
       var $8=$3;
       var $9=(($8+200)|0);
-      var $10=HEAP32[(($9)>>2)];
+      var $10=HEAP[$9];
       var $11=(($10)|0) >= 1;
       if ($11) { __label__ = 3; break; } else { __label__ = 10; break; }
     case 3: 
@@ -6548,7 +6469,7 @@ function _Sfx86OpcodeExec_enterleave($opcode, $ctx) {
       var $33=(($32+20)|0);
       var $34=$33;
       var $35=(($34)|0);
-      var $36=HEAP16[(($35)>>1)];
+      var $36=HEAP[$35];
       _softx86_stack_pushw($29, $36);
       var $37=$3;
       var $38=(($37+4)|0);
@@ -6556,7 +6477,7 @@ function _Sfx86OpcodeExec_enterleave($opcode, $ctx) {
       var $40=(($39+16)|0);
       var $41=$40;
       var $42=(($41)|0);
-      var $43=HEAP16[(($42)>>1)];
+      var $43=HEAP[$42];
       $FrameTemp=$43;
       var $44=$NestingLevel;
       var $45=(($44)&255);
@@ -6578,11 +6499,11 @@ function _Sfx86OpcodeExec_enterleave($opcode, $ctx) {
       var $57=(($56+20)|0);
       var $58=$57;
       var $59=(($58)|0);
-      var $60=HEAPU16[(($59)>>1)];
+      var $60=HEAP[$59];
       var $61=(($60)&65535);
       var $62=(($61-2)|0);
       var $63=(($62) & 65535);
-      HEAP16[(($59)>>1)]=$63;
+      HEAP[$59]=$63;
       var $64=$3;
       var $65=$3;
       var $66=(($65+4)|0);
@@ -6590,7 +6511,7 @@ function _Sfx86OpcodeExec_enterleave($opcode, $ctx) {
       var $68=(($67+20)|0);
       var $69=$68;
       var $70=(($69)|0);
-      var $71=HEAP16[(($70)>>1)];
+      var $71=HEAP[$70];
       _softx86_stack_pushw($64, $71);
       __label__ = 7; break;
     case 7: 
@@ -6611,14 +6532,14 @@ function _Sfx86OpcodeExec_enterleave($opcode, $ctx) {
       var $83=(($82+20)|0);
       var $84=$83;
       var $85=(($84)|0);
-      HEAP16[(($85)>>1)]=$79;
+      HEAP[$85]=$79;
       var $86=$3;
       var $87=$3;
       var $88=(($87+4)|0);
       var $89=(($88+32)|0);
       var $90=(($89+16)|0);
       var $91=(($90)|0);
-      var $92=HEAPU16[(($91)>>1)];
+      var $92=HEAP[$91];
       var $93=(($92)&65535);
       var $94=$3;
       var $95=(($94+4)|0);
@@ -6626,7 +6547,7 @@ function _Sfx86OpcodeExec_enterleave($opcode, $ctx) {
       var $97=(($96+20)|0);
       var $98=$97;
       var $99=(($98)|0);
-      var $100=HEAPU16[(($99)>>1)];
+      var $100=HEAP[$99];
       var $101=(($100)&65535);
       var $102=$Size;
       var $103=(($102)&65535);
@@ -6642,7 +6563,7 @@ function _Sfx86OpcodeExec_enterleave($opcode, $ctx) {
     case 11: 
       var $111=$3;
       var $112=(($111+200)|0);
-      var $113=HEAP32[(($112)>>2)];
+      var $113=HEAP[$112];
       var $114=(($113)|0) >= 1;
       if ($114) { __label__ = 12; break; } else { __label__ = 13; break; }
     case 12: 
@@ -6652,7 +6573,7 @@ function _Sfx86OpcodeExec_enterleave($opcode, $ctx) {
       var $119=(($118+32)|0);
       var $120=(($119+16)|0);
       var $121=(($120)|0);
-      var $122=HEAPU16[(($121)>>1)];
+      var $122=HEAP[$121];
       var $123=(($122)&65535);
       var $124=$3;
       var $125=(($124+4)|0);
@@ -6660,7 +6581,7 @@ function _Sfx86OpcodeExec_enterleave($opcode, $ctx) {
       var $127=(($126+20)|0);
       var $128=$127;
       var $129=(($128)|0);
-      var $130=HEAPU16[(($129)>>1)];
+      var $130=HEAP[$129];
       var $131=(($130)&65535);
       var $132=_softx86_set_stack_ptr($116, $123, $131);
       var $133=$3;
@@ -6671,7 +6592,7 @@ function _Sfx86OpcodeExec_enterleave($opcode, $ctx) {
       var $138=(($137+20)|0);
       var $139=$138;
       var $140=(($139)|0);
-      HEAP16[(($140)>>1)]=$134;
+      HEAP[$140]=$134;
       $1=1;
       __label__ = 14; break;
     case 13: 
@@ -6708,7 +6629,7 @@ function _Sfx86OpcodeDec_enterleave($opcode, $ctx, $buf) {
     case 2: 
       var $9=$3;
       var $10=(($9+200)|0);
-      var $11=HEAP32[(($10)>>2)];
+      var $11=HEAP[$10];
       var $12=(($11)|0) >= 1;
       if ($12) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
@@ -6733,7 +6654,7 @@ function _Sfx86OpcodeDec_enterleave($opcode, $ctx, $buf) {
       var $29=(($28)&65535);
       var $30=$imm;
       var $31=(($30)&255);
-      var $32=_sprintf($27, ((STRING_TABLE.__str577)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$29,HEAP32[((tempInt+4)>>2)]=$31,tempInt));
+      var $32=_sprintf($27, ((STRING_TABLE.__str577)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$29,HEAP[tempInt+4]=$31,tempInt));
       $1=1;
       __label__ = 8; break;
     case 4: 
@@ -6744,7 +6665,7 @@ function _Sfx86OpcodeDec_enterleave($opcode, $ctx, $buf) {
     case 5: 
       var $38=$3;
       var $39=(($38+200)|0);
-      var $40=HEAP32[(($39)>>2)];
+      var $40=HEAP[$39];
       var $41=(($40)|0) >= 1;
       if ($41) { __label__ = 6; break; } else { __label__ = 7; break; }
     case 6: 
@@ -6799,7 +6720,7 @@ function _Sfx86OpcodeExec_pop($opcode, $ctx) {
       var $21=(($20+($17<<2))|0);
       var $22=$21;
       var $23=(($22)|0);
-      HEAP16[(($23)>>1)]=$14;
+      HEAP[$23]=$14;
       $1=1;
       __label__ = 16; break;
     case 4: 
@@ -6855,7 +6776,7 @@ function _Sfx86OpcodeExec_pop($opcode, $ctx) {
     case 11: 
       var $62=$3;
       var $63=(($62+200)|0);
-      var $64=HEAP32[(($63)>>2)];
+      var $64=HEAP[$63];
       var $65=(($64)|0) <= 1;
       if ($65) { __label__ = 12; break; } else { __label__ = 13; break; }
     case 12: 
@@ -6881,7 +6802,7 @@ function _Sfx86OpcodeExec_pop($opcode, $ctx) {
       var $82=(($81+96)|0);
       var $83=$82;
       var $84=(($83)|0);
-      HEAP16[(($84)>>1)]=$79;
+      HEAP[$84]=$79;
       $1=1;
       __label__ = 16; break;
     case 15: 
@@ -6924,8 +6845,8 @@ function _Sfx86OpcodeDec_pop($opcode, $ctx, $buf) {
       var $15=(($14)&255);
       var $16=(($15-88)|0);
       var $17=((_sx86_regs16+($16<<2))|0);
-      var $18=HEAP32[(($17)>>2)];
-      var $19=_sprintf($13, ((STRING_TABLE.__str87)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$18,tempInt));
+      var $18=HEAP[$17];
+      var $19=_sprintf($13, ((STRING_TABLE.__str87)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$18,tempInt));
       $1=1;
       __label__ = 16; break;
     case 4: 
@@ -6966,7 +6887,7 @@ function _Sfx86OpcodeDec_pop($opcode, $ctx, $buf) {
     case 11: 
       var $46=$3;
       var $47=(($46+200)|0);
-      var $48=HEAP32[(($47)>>2)];
+      var $48=HEAP[$47];
       var $49=(($48)|0) <= 1;
       if ($49) { __label__ = 12; break; } else { __label__ = 13; break; }
     case 12: 
@@ -7026,7 +6947,7 @@ function _Sfx86OpcodeExec_push($opcode, $ctx) {
       var $16=$3;
       var $17=(($16+180)|0);
       var $18=(($17+1)|0);
-      var $19=HEAPU8[($18)];
+      var $19=HEAP[$18];
       var $20=(($19)&255);
       var $21=(($20)|0)!=0;
       if ($21) { __label__ = 5; break; } else { __label__ = 6; break; }
@@ -7040,7 +6961,7 @@ function _Sfx86OpcodeExec_push($opcode, $ctx) {
       var $29=(($28+($25<<2))|0);
       var $30=$29;
       var $31=(($30)|0);
-      var $32=HEAPU16[(($31)>>1)];
+      var $32=HEAP[$31];
       var $33=(($32)&65535);
       var $34=(($33-2)|0);
       var $35=(($34) & 65535);
@@ -7056,7 +6977,7 @@ function _Sfx86OpcodeExec_push($opcode, $ctx) {
       var $43=(($42+($39<<2))|0);
       var $44=$43;
       var $45=(($44)|0);
-      var $46=HEAP16[(($45)>>1)];
+      var $46=HEAP[$45];
       $val=$46;
       __label__ = 7; break;
     case 7: 
@@ -7077,7 +6998,7 @@ function _Sfx86OpcodeExec_push($opcode, $ctx) {
       var $58=(($57+32)|0);
       var $59=(($58+24)|0);
       var $60=(($59)|0);
-      var $61=HEAP16[(($60)>>1)];
+      var $61=HEAP[$60];
       _softx86_stack_pushw($55, $61);
       $1=1;
       __label__ = 19; break;
@@ -7093,7 +7014,7 @@ function _Sfx86OpcodeExec_push($opcode, $ctx) {
       var $70=(($69+32)|0);
       var $71=(($70)|0);
       var $72=(($71)|0);
-      var $73=HEAP16[(($72)>>1)];
+      var $73=HEAP[$72];
       _softx86_stack_pushw($67, $73);
       $1=1;
       __label__ = 19; break;
@@ -7109,7 +7030,7 @@ function _Sfx86OpcodeExec_push($opcode, $ctx) {
       var $82=(($81+32)|0);
       var $83=(($82+16)|0);
       var $84=(($83)|0);
-      var $85=HEAP16[(($84)>>1)];
+      var $85=HEAP[$84];
       _softx86_stack_pushw($79, $85);
       $1=1;
       __label__ = 19; break;
@@ -7125,7 +7046,7 @@ function _Sfx86OpcodeExec_push($opcode, $ctx) {
       var $94=(($93+32)|0);
       var $95=(($94+8)|0);
       var $96=(($95)|0);
-      var $97=HEAP16[(($96)>>1)];
+      var $97=HEAP[$96];
       _softx86_stack_pushw($91, $97);
       $1=1;
       __label__ = 19; break;
@@ -7141,7 +7062,7 @@ function _Sfx86OpcodeExec_push($opcode, $ctx) {
       var $106=(($105+96)|0);
       var $107=$106;
       var $108=(($107)|0);
-      var $109=HEAP16[(($108)>>1)];
+      var $109=HEAP[$108];
       _softx86_stack_pushw($103, $109);
       $1=1;
       __label__ = 19; break;
@@ -7185,8 +7106,8 @@ function _Sfx86OpcodeDec_push($opcode, $ctx, $buf) {
       var $15=(($14)&255);
       var $16=(($15-80)|0);
       var $17=((_sx86_regs16+($16<<2))|0);
-      var $18=HEAP32[(($17)>>2)];
-      var $19=_sprintf($13, ((STRING_TABLE.__str693)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$18,tempInt));
+      var $18=HEAP[$17];
+      var $19=_sprintf($13, ((STRING_TABLE.__str693)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$18,tempInt));
       $1=1;
       __label__ = 15; break;
     case 4: 
@@ -7439,11 +7360,11 @@ function _softx86_getversion($major, $minor, $subminor) {
       __label__ = 6; break;
     case 5: 
       var $15=$2;
-      HEAP32[(($15)>>2)]=0;
+      HEAP[$15]=0;
       var $16=$3;
-      HEAP32[(($16)>>2)]=0;
+      HEAP[$16]=0;
       var $17=$4;
-      HEAP32[(($17)>>2)]=29;
+      HEAP[$17]=29;
       $1=1;
       __label__ = 6; break;
     case 6: 
@@ -7592,7 +7513,7 @@ function _softx86_setsegval($ctx, $sreg_id, $x) {
       var $17=(($16+32)|0);
       var $18=(($17+($14<<3))|0);
       var $19=(($18)|0);
-      HEAP16[(($19)>>1)]=$13;
+      HEAP[$19]=$13;
       var $20=$4;
       var $21=$20 << 4;
       var $22=$3;
@@ -7601,7 +7522,7 @@ function _softx86_setsegval($ctx, $sreg_id, $x) {
       var $25=(($24+32)|0);
       var $26=(($25+($22<<3))|0);
       var $27=(($26+4)|0);
-      HEAP32[(($27)>>2)]=$21;
+      HEAP[$27]=$21;
       $1=1;
       __label__ = 5; break;
     case 5: 
@@ -7632,7 +7553,7 @@ function _Sfx86OpcodeExec_pusha($opcode, $ctx) {
     case 2: 
       var $8=$3;
       var $9=(($8+200)|0);
-      var $10=HEAP32[(($9)>>2)];
+      var $10=HEAP[$9];
       var $11=(($10)|0) >= 2;
       if ($11) { __label__ = 3; break; } else { __label__ = 7; break; }
     case 3: 
@@ -7642,7 +7563,7 @@ function _Sfx86OpcodeExec_pusha($opcode, $ctx) {
       var $16=(($15+16)|0);
       var $17=$16;
       var $18=(($17)|0);
-      var $19=HEAP16[(($18)>>1)];
+      var $19=HEAP[$18];
       $temp_sp=$19;
       var $20=$3;
       var $21=$3;
@@ -7651,7 +7572,7 @@ function _Sfx86OpcodeExec_pusha($opcode, $ctx) {
       var $24=(($23)|0);
       var $25=$24;
       var $26=(($25)|0);
-      var $27=HEAP16[(($26)>>1)];
+      var $27=HEAP[$26];
       _softx86_stack_pushw($20, $27);
       var $28=$3;
       var $29=$3;
@@ -7660,7 +7581,7 @@ function _Sfx86OpcodeExec_pusha($opcode, $ctx) {
       var $32=(($31+4)|0);
       var $33=$32;
       var $34=(($33)|0);
-      var $35=HEAP16[(($34)>>1)];
+      var $35=HEAP[$34];
       _softx86_stack_pushw($28, $35);
       var $36=$3;
       var $37=$3;
@@ -7669,7 +7590,7 @@ function _Sfx86OpcodeExec_pusha($opcode, $ctx) {
       var $40=(($39+8)|0);
       var $41=$40;
       var $42=(($41)|0);
-      var $43=HEAP16[(($42)>>1)];
+      var $43=HEAP[$42];
       _softx86_stack_pushw($36, $43);
       var $44=$3;
       var $45=$3;
@@ -7678,12 +7599,12 @@ function _Sfx86OpcodeExec_pusha($opcode, $ctx) {
       var $48=(($47+12)|0);
       var $49=$48;
       var $50=(($49)|0);
-      var $51=HEAP16[(($50)>>1)];
+      var $51=HEAP[$50];
       _softx86_stack_pushw($44, $51);
       var $52=$3;
       var $53=(($52+180)|0);
       var $54=(($53+1)|0);
-      var $55=HEAP8[($54)];
+      var $55=HEAP[$54];
       var $56=(($55 << 24) >> 24)!=0;
       if ($56) { __label__ = 4; break; } else { __label__ = 5; break; }
     case 4: 
@@ -7694,7 +7615,7 @@ function _Sfx86OpcodeExec_pusha($opcode, $ctx) {
       var $62=(($61+16)|0);
       var $63=$62;
       var $64=(($63)|0);
-      var $65=HEAP16[(($64)>>1)];
+      var $65=HEAP[$64];
       _softx86_stack_pushw($58, $65);
       __label__ = 6; break;
     case 5: 
@@ -7710,7 +7631,7 @@ function _Sfx86OpcodeExec_pusha($opcode, $ctx) {
       var $74=(($73+20)|0);
       var $75=$74;
       var $76=(($75)|0);
-      var $77=HEAP16[(($76)>>1)];
+      var $77=HEAP[$76];
       _softx86_stack_pushw($70, $77);
       var $78=$3;
       var $79=$3;
@@ -7719,7 +7640,7 @@ function _Sfx86OpcodeExec_pusha($opcode, $ctx) {
       var $82=(($81+24)|0);
       var $83=$82;
       var $84=(($83)|0);
-      var $85=HEAP16[(($84)>>1)];
+      var $85=HEAP[$84];
       _softx86_stack_pushw($78, $85);
       var $86=$3;
       var $87=$3;
@@ -7728,7 +7649,7 @@ function _Sfx86OpcodeExec_pusha($opcode, $ctx) {
       var $90=(($89+28)|0);
       var $91=$90;
       var $92=(($91)|0);
-      var $93=HEAP16[(($92)>>1)];
+      var $93=HEAP[$92];
       _softx86_stack_pushw($86, $93);
       $1=1;
       __label__ = 8; break;
@@ -7764,7 +7685,7 @@ function _Sfx86OpcodeDec_pusha($opcode, $ctx, $buf) {
     case 2: 
       var $9=$3;
       var $10=(($9+200)|0);
-      var $11=HEAP32[(($10)>>2)];
+      var $11=HEAP[$10];
       var $12=(($11)|0) >= 2;
       if ($12) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
@@ -7802,7 +7723,7 @@ function _Sfx86OpcodeExec_popa($opcode, $ctx) {
     case 2: 
       var $8=$3;
       var $9=(($8+200)|0);
-      var $10=HEAP32[(($9)>>2)];
+      var $10=HEAP[$9];
       var $11=(($10)|0) >= 2;
       if ($11) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
@@ -7814,7 +7735,7 @@ function _Sfx86OpcodeExec_popa($opcode, $ctx) {
       var $18=(($17+28)|0);
       var $19=$18;
       var $20=(($19)|0);
-      HEAP16[(($20)>>1)]=$14;
+      HEAP[$20]=$14;
       var $21=$3;
       var $22=_softx86_stack_popw($21);
       var $23=$3;
@@ -7823,7 +7744,7 @@ function _Sfx86OpcodeExec_popa($opcode, $ctx) {
       var $26=(($25+24)|0);
       var $27=$26;
       var $28=(($27)|0);
-      HEAP16[(($28)>>1)]=$22;
+      HEAP[$28]=$22;
       var $29=$3;
       var $30=_softx86_stack_popw($29);
       var $31=$3;
@@ -7832,7 +7753,7 @@ function _Sfx86OpcodeExec_popa($opcode, $ctx) {
       var $34=(($33+20)|0);
       var $35=$34;
       var $36=(($35)|0);
-      HEAP16[(($36)>>1)]=$30;
+      HEAP[$36]=$30;
       var $37=$3;
       var $38=_softx86_stack_popw($37);
       var $39=$3;
@@ -7843,7 +7764,7 @@ function _Sfx86OpcodeExec_popa($opcode, $ctx) {
       var $44=(($43+12)|0);
       var $45=$44;
       var $46=(($45)|0);
-      HEAP16[(($46)>>1)]=$40;
+      HEAP[$46]=$40;
       var $47=$3;
       var $48=_softx86_stack_popw($47);
       var $49=$3;
@@ -7852,7 +7773,7 @@ function _Sfx86OpcodeExec_popa($opcode, $ctx) {
       var $52=(($51+8)|0);
       var $53=$52;
       var $54=(($53)|0);
-      HEAP16[(($54)>>1)]=$48;
+      HEAP[$54]=$48;
       var $55=$3;
       var $56=_softx86_stack_popw($55);
       var $57=$3;
@@ -7861,7 +7782,7 @@ function _Sfx86OpcodeExec_popa($opcode, $ctx) {
       var $60=(($59+4)|0);
       var $61=$60;
       var $62=(($61)|0);
-      HEAP16[(($62)>>1)]=$56;
+      HEAP[$62]=$56;
       var $63=$3;
       var $64=_softx86_stack_popw($63);
       var $65=$3;
@@ -7870,7 +7791,7 @@ function _Sfx86OpcodeExec_popa($opcode, $ctx) {
       var $68=(($67)|0);
       var $69=$68;
       var $70=(($69)|0);
-      HEAP16[(($70)>>1)]=$64;
+      HEAP[$70]=$64;
       $1=1;
       __label__ = 5; break;
     case 4: 
@@ -7905,7 +7826,7 @@ function _Sfx86OpcodeDec_popa($opcode, $ctx, $buf) {
     case 2: 
       var $9=$3;
       var $10=(($9+200)|0);
-      var $11=HEAP32[(($10)>>2)];
+      var $11=HEAP[$10];
       var $12=(($11)|0) >= 2;
       if ($12) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
@@ -7943,97 +7864,97 @@ function _softx86_reset($ctx) {
     case 3: 
       var $7=$2;
       var $8=(($7+200)|0);
-      var $9=HEAP32[(($8)>>2)];
+      var $9=HEAP[$8];
       var $10=(($9)|0) >= 3;
       if ($10) { __label__ = 4; break; } else { __label__ = 5; break; }
     case 4: 
       var $12=$2;
       var $13=(($12+188)|0);
-      HEAP32[(($13)>>2)]=16777215;
+      HEAP[$13]=16777215;
       __label__ = 6; break;
     case 5: 
       var $15=$2;
       var $16=(($15+188)|0);
-      HEAP32[(($16)>>2)]=1048575;
+      HEAP[$16]=1048575;
       __label__ = 6; break;
     case 6: 
       var $18=$2;
       var $19=(($18+200)|0);
-      var $20=HEAP32[(($19)>>2)];
+      var $20=HEAP[$19];
       var $21=(($20)|0) >= 1;
       if ($21) { __label__ = 7; break; } else { __label__ = 8; break; }
     case 7: 
       var $23=$2;
       var $24=(($23+192)|0);
-      HEAP32[(($24)>>2)]=2;
+      HEAP[$24]=2;
       __label__ = 9; break;
     case 8: 
       var $26=$2;
       var $27=(($26+192)|0);
-      HEAP32[(($27)>>2)]=1;
+      HEAP[$27]=1;
       __label__ = 9; break;
     case 9: 
       var $29=$2;
       var $30=(($29+192)|0);
-      var $31=HEAP32[(($30)>>2)];
+      var $31=HEAP[$30];
       var $32=(($31-1)|0);
       var $33=-1 << $32;
       var $34=$2;
       var $35=(($34+196)|0);
-      HEAP32[(($35)>>2)]=$33;
+      HEAP[$35]=$33;
       var $36=$2;
       var $37=(($36+4)|0);
       var $38=(($37)|0);
       var $39=(($38)|0);
       var $40=$39;
-      HEAP32[(($40)>>2)]=0;
+      HEAP[$40]=0;
       var $41=$2;
       var $42=(($41+4)|0);
       var $43=(($42)|0);
       var $44=(($43+12)|0);
       var $45=$44;
-      HEAP32[(($45)>>2)]=0;
+      HEAP[$45]=0;
       var $46=$2;
       var $47=(($46+4)|0);
       var $48=(($47)|0);
       var $49=(($48+4)|0);
       var $50=$49;
-      HEAP32[(($50)>>2)]=0;
+      HEAP[$50]=0;
       var $51=$2;
       var $52=(($51+4)|0);
       var $53=(($52)|0);
       var $54=(($53+8)|0);
       var $55=$54;
-      HEAP32[(($55)>>2)]=0;
+      HEAP[$55]=0;
       var $56=$2;
       var $57=(($56+4)|0);
       var $58=(($57)|0);
       var $59=(($58+24)|0);
       var $60=$59;
-      HEAP32[(($60)>>2)]=0;
+      HEAP[$60]=0;
       var $61=$2;
       var $62=(($61+4)|0);
       var $63=(($62)|0);
       var $64=(($63+28)|0);
       var $65=$64;
-      HEAP32[(($65)>>2)]=0;
+      HEAP[$65]=0;
       var $66=$2;
       var $67=(($66+4)|0);
       var $68=(($67)|0);
       var $69=(($68+16)|0);
       var $70=$69;
-      HEAP32[(($70)>>2)]=0;
+      HEAP[$70]=0;
       var $71=$2;
       var $72=(($71+4)|0);
       var $73=(($72)|0);
       var $74=(($73+20)|0);
       var $75=$74;
-      HEAP32[(($75)>>2)]=0;
+      HEAP[$75]=0;
       var $76=$2;
       var $77=(($76+4)|0);
       var $78=(($77+96)|0);
       var $79=$78;
-      HEAP32[(($79)>>2)]=2;
+      HEAP[$79]=2;
       var $80=$2;
       var $81=_softx86_setsegval($80, 3, 61440);
       var $82=$2;
@@ -8049,7 +7970,7 @@ function _softx86_reset($ctx) {
       var $92=$2;
       var $93=(($92+204)|0);
       var $94=(($93)|0);
-      HEAP32[(($94)>>2)]=$91;
+      HEAP[$94]=$91;
       var $95=$2;
       var $96=(($95+4)|0);
       var $97=(($96)|0);
@@ -8059,7 +7980,7 @@ function _softx86_reset($ctx) {
       var $101=$2;
       var $102=(($101+204)|0);
       var $103=(($102+4)|0);
-      HEAP32[(($103)>>2)]=$100;
+      HEAP[$103]=$100;
       var $104=$2;
       var $105=(($104+4)|0);
       var $106=(($105)|0);
@@ -8069,7 +7990,7 @@ function _softx86_reset($ctx) {
       var $110=$2;
       var $111=(($110+204)|0);
       var $112=(($111+8)|0);
-      HEAP32[(($112)>>2)]=$109;
+      HEAP[$112]=$109;
       var $113=$2;
       var $114=(($113+4)|0);
       var $115=(($114)|0);
@@ -8079,7 +8000,7 @@ function _softx86_reset($ctx) {
       var $119=$2;
       var $120=(($119+204)|0);
       var $121=(($120+12)|0);
-      HEAP32[(($121)>>2)]=$118;
+      HEAP[$121]=$118;
       var $122=$2;
       var $123=(($122+4)|0);
       var $124=(($123)|0);
@@ -8089,7 +8010,7 @@ function _softx86_reset($ctx) {
       var $128=$2;
       var $129=(($128+204)|0);
       var $130=(($129+16)|0);
-      HEAP32[(($130)>>2)]=$127;
+      HEAP[$130]=$127;
       var $131=$2;
       var $132=(($131+4)|0);
       var $133=(($132)|0);
@@ -8099,7 +8020,7 @@ function _softx86_reset($ctx) {
       var $137=$2;
       var $138=(($137+204)|0);
       var $139=(($138+20)|0);
-      HEAP32[(($139)>>2)]=$136;
+      HEAP[$139]=$136;
       var $140=$2;
       var $141=(($140+4)|0);
       var $142=(($141)|0);
@@ -8109,7 +8030,7 @@ function _softx86_reset($ctx) {
       var $146=$2;
       var $147=(($146+204)|0);
       var $148=(($147+24)|0);
-      HEAP32[(($148)>>2)]=$145;
+      HEAP[$148]=$145;
       var $149=$2;
       var $150=(($149+4)|0);
       var $151=(($150)|0);
@@ -8119,58 +8040,58 @@ function _softx86_reset($ctx) {
       var $155=$2;
       var $156=(($155+204)|0);
       var $157=(($156+28)|0);
-      HEAP32[(($157)>>2)]=$154;
+      HEAP[$157]=$154;
       var $158=$2;
       var $159=_softx86_setsegval($158, 1, 61440);
       var $160=$2;
       var $161=(($160+4)|0);
       var $162=(($161+100)|0);
-      HEAP32[(($162)>>2)]=65520;
+      HEAP[$162]=65520;
       var $163=$2;
       var $164=(($163+4)|0);
       var $165=(($164+120)|0);
-      HEAP8[($165)]=0;
+      HEAP[$165]=0;
       var $166=$2;
       var $167=(($166+4)|0);
       var $168=(($167+122)|0);
-      HEAP8[($168)]=0;
+      HEAP[$168]=0;
       var $169=$2;
       var $170=(($169+200)|0);
-      var $171=HEAP32[(($170)>>2)];
+      var $171=HEAP[$170];
       var $172=(($171)|0) <= 1;
       var $173=$172 ? 1 : 0;
       var $174=(($173) & 255);
       var $175=$2;
       var $176=(($175+180)|0);
       var $177=(($176)|0);
-      HEAP8[($177)]=$174;
+      HEAP[$177]=$174;
       var $178=$2;
       var $179=(($178+200)|0);
-      var $180=HEAP32[(($179)>>2)];
+      var $180=HEAP[$179];
       var $181=(($180)|0) <= 2;
       var $182=$181 ? 1 : 0;
       var $183=(($182) & 255);
       var $184=$2;
       var $185=(($184+180)|0);
       var $186=(($185+1)|0);
-      HEAP8[($186)]=$183;
+      HEAP[$186]=$183;
       var $187=$2;
       var $188=(($187+200)|0);
-      var $189=HEAP32[(($188)>>2)];
+      var $189=HEAP[$188];
       var $190=(($189)|0) >= 3;
       var $191=$190 ? 1 : 0;
       var $192=(($191) & 255);
       var $193=$2;
       var $194=(($193+180)|0);
       var $195=(($194+2)|0);
-      HEAP8[($195)]=$192;
+      HEAP[$195]=$192;
       var $196=$2;
       var $197=(($196+184)|0);
-      HEAP32[(($197)>>2)]=_optab8086;
+      HEAP[$197]=_optab8086;
       var $198=$2;
       var $199=(($198+128)|0);
       var $200=(($199+40)|0);
-      var $201=HEAP32[(($200)>>2)];
+      var $201=HEAP[$200];
       var $202=$2;
       var $203=$202;
       FUNCTION_TABLE[$201]($203);
@@ -8229,71 +8150,71 @@ function _softx86_init($ctx, $level) {
       var $20=$3;
       var $21=$2;
       var $22=(($21+200)|0);
-      HEAP32[(($22)>>2)]=$20;
+      HEAP[$22]=$20;
       var $23=$2;
       var $24=(($23)|0);
-      HEAP8[($24)]=0;
+      HEAP[$24]=0;
       var $25=$2;
       var $26=(($25+1)|0);
-      HEAP8[($26)]=0;
+      HEAP[$26]=0;
       var $27=$2;
       var $28=(($27+2)|0);
-      HEAP16[(($28)>>1)]=29;
+      HEAP[$28]=29;
       var $29=$2;
       var $30=(($29+128)|0);
       var $31=(($30+4)|0);
-      HEAP32[(($31)>>2)]=26;
+      HEAP[$31]=26;
       var $32=$2;
       var $33=(($32+128)|0);
       var $34=(($33)|0);
-      HEAP32[(($34)>>2)]=28;
+      HEAP[$34]=28;
       var $35=$2;
       var $36=(($35+128)|0);
       var $37=(($36+12)|0);
-      HEAP32[(($37)>>2)]=30;
+      HEAP[$37]=30;
       var $38=$2;
       var $39=(($38+128)|0);
       var $40=(($39+8)|0);
-      HEAP32[(($40)>>2)]=32;
+      HEAP[$40]=32;
       var $41=$2;
       var $42=(($41+128)|0);
       var $43=(($42+16)|0);
-      HEAP32[(($43)>>2)]=34;
+      HEAP[$43]=34;
       var $44=$2;
       var $45=(($44+128)|0);
       var $46=(($45+24)|0);
-      HEAP32[(($46)>>2)]=36;
+      HEAP[$46]=36;
       var $47=$2;
       var $48=(($47+128)|0);
       var $49=(($48+20)|0);
-      HEAP32[(($49)>>2)]=38;
+      HEAP[$49]=38;
       var $50=$2;
       var $51=(($50+128)|0);
       var $52=(($51+36)|0);
-      HEAP32[(($52)>>2)]=40;
+      HEAP[$52]=40;
       var $53=$2;
       var $54=(($53+128)|0);
       var $55=(($54+28)|0);
-      HEAP32[(($55)>>2)]=42;
+      HEAP[$55]=42;
       var $56=$2;
       var $57=(($56+128)|0);
       var $58=(($57+32)|0);
-      HEAP32[(($58)>>2)]=44;
+      HEAP[$58]=44;
       var $59=$2;
       var $60=(($59+128)|0);
       var $61=(($60+48)|0);
-      HEAP32[(($61)>>2)]=46;
+      HEAP[$61]=46;
       var $62=$2;
       var $63=(($62+128)|0);
       var $64=(($63+44)|0);
-      HEAP32[(($64)>>2)]=48;
+      HEAP[$64]=48;
       var $65=$2;
       var $66=(($65+128)|0);
       var $67=(($66+40)|0);
-      HEAP32[(($67)>>2)]=50;
+      HEAP[$67]=50;
       var $68=$2;
       var $69=(($68+244)|0);
-      HEAP32[(($69)>>2)]=0;
+      HEAP[$69]=0;
       var $70=$2;
       var $71=_softx86_reset($70);
       var $72=(($71)|0)!=0;
@@ -8348,7 +8269,9 @@ function _softx86_step_def_on_read_io($_ctx, $address, $buf, $size) {
     case 5: 
       var $17=$3;
       var $18=$4;
-      _memset($17, -1, $18, 1);
+      for (var $$dest = $17, $$stop = $$dest + $18; $$dest < $$stop; $$dest++) {
+      HEAP[$$dest]=-1
+      };
       __label__ = 6; break;
     case 6: 
       ;
@@ -8392,7 +8315,9 @@ function _softx86_step_def_on_read_memory($_ctx, $address, $buf, $size) {
     case 5: 
       var $17=$3;
       var $18=$4;
-      _memset($17, -1, $18, 1);
+      for (var $$dest = $17, $$stop = $$dest + $18; $$dest < $$stop; $$dest++) {
+      HEAP[$$dest]=-1
+      };
       __label__ = 6; break;
     case 6: 
       ;
@@ -8401,7 +8326,22 @@ function _softx86_step_def_on_read_memory($_ctx, $address, $buf, $size) {
   }
 }
 
-// Warning: Arithmetic on 64-bit integers in mode 1 is rounded and flaky, like mode 0!
+// Warning: Cannot correct overflows of this many bits: 64 at line 8013
+// Warning: 64 bit AND - precision limit may be hit on llvm line 8014
+// Warning: Cannot correct overflows of this many bits: 64 at line 8019
+// Warning: 64 bit AND - precision limit may be hit on llvm line 8020
+// Warning: Cannot correct overflows of this many bits: 64 at line 8027
+// Warning: 64 bit AND - precision limit may be hit on llvm line 8028
+// Warning: Cannot correct overflows of this many bits: 64 at line 8035
+// Warning: 64 bit AND - precision limit may be hit on llvm line 8036
+// Warning: Cannot correct overflows of this many bits: 64 at line 8331
+// Warning: 64 bit AND - precision limit may be hit on llvm line 8332
+// Warning: Cannot correct overflows of this many bits: 64 at line 8337
+// Warning: 64 bit AND - precision limit may be hit on llvm line 8338
+// Warning: Cannot correct overflows of this many bits: 64 at line 8345
+// Warning: 64 bit AND - precision limit may be hit on llvm line 8346
+// Warning: Cannot correct overflows of this many bits: 64 at line 8353
+// Warning: 64 bit AND - precision limit may be hit on llvm line 8354
 
 function _softx86_stack_discard_n($ctx, $bytez) {
   ;
@@ -8426,11 +8366,11 @@ function _softx86_stack_discard_n($ctx, $bytez) {
       var $11=(($10+16)|0);
       var $12=$11;
       var $13=(($12)|0);
-      var $14=HEAPU16[(($13)>>1)];
+      var $14=HEAP[$13];
       var $15=(($14)&65535);
       var $16=(($15+$7)|0);
       var $17=(($16) & 65535);
-      HEAP16[(($13)>>1)]=$17;
+      HEAP[$13]=$17;
       __label__ = 4; break;
     case 4: 
       ;
@@ -8463,11 +8403,11 @@ function _softx86_stack_add_n($ctx, $bytez) {
       var $11=(($10+16)|0);
       var $12=$11;
       var $13=(($12)|0);
-      var $14=HEAPU16[(($13)>>1)];
+      var $14=HEAP[$13];
       var $15=(($14)&65535);
       var $16=(($15-$7)|0);
       var $17=(($16) & 65535);
-      HEAP16[(($13)>>1)]=$17;
+      HEAP[$13]=$17;
       __label__ = 4; break;
     case 4: 
       ;
@@ -8499,7 +8439,7 @@ function _softx86_set_near_instruction_ptr($ctx, $ip) {
       var $9=$2;
       var $10=(($9+4)|0);
       var $11=(($10+100)|0);
-      HEAP32[(($11)>>2)]=$8;
+      HEAP[$11]=$8;
       $1=1;
       __label__ = 4; break;
     case 4: 
@@ -8535,13 +8475,13 @@ function _softx86_set_instruction_dec_ptr($ctx, $cs, $ip) {
       var $10=$2;
       var $11=(($10+4)|0);
       var $12=(($11+116)|0);
-      HEAP32[(($12)>>2)]=$9;
+      HEAP[$12]=$9;
       var $13=$3;
       var $14=(($13) & 65535);
       var $15=$2;
       var $16=(($15+4)|0);
       var $17=(($16+112)|0);
-      HEAP16[(($17)>>1)]=$14;
+      HEAP[$17]=$14;
       $1=1;
       __label__ = 4; break;
     case 4: 
@@ -8574,7 +8514,7 @@ function _softx86_setbug($ctx, $bug_id, $on_off) {
       var $9=$2;
       var $10=(($9+180)|0);
       var $11=(($10)|0);
-      HEAP8[($11)]=$8;
+      HEAP[$11]=$8;
       $1=1;
       __label__ = 7; break;
     case 3: 
@@ -8586,7 +8526,7 @@ function _softx86_setbug($ctx, $bug_id, $on_off) {
       var $17=$2;
       var $18=(($17+180)|0);
       var $19=(($18+1)|0);
-      HEAP8[($19)]=$16;
+      HEAP[$19]=$16;
       __label__ = 5; break;
     case 5: 
       __label__ = 6; break;
@@ -8603,7 +8543,7 @@ function _softx86_setbug($ctx, $bug_id, $on_off) {
 
 
 function _softx86_fetch_exec_byte($ctx) {
-  var __stackBase__  = STACKTOP; STACKTOP += 4; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 1; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -8625,20 +8565,20 @@ function _softx86_fetch_exec_byte($ctx) {
       var $10=(($9+32)|0);
       var $11=(($10+8)|0);
       var $12=(($11+4)|0);
-      var $13=HEAP32[(($12)>>2)];
+      var $13=HEAP[$12];
       var $14=$2;
       var $15=(($14+4)|0);
       var $16=(($15+100)|0);
-      var $17=HEAP32[(($16)>>2)];
+      var $17=HEAP[$16];
       var $18=(($13+$17)|0);
       var $19=_softx86_fetch($7, 0, $18, $opcode, 1);
       var $20=$2;
       var $21=(($20+4)|0);
       var $22=(($21+100)|0);
-      var $23=HEAP32[(($22)>>2)];
+      var $23=HEAP[$22];
       var $24=(($23+1)|0);
-      HEAP32[(($22)>>2)]=$24;
-      var $25=HEAP8[($opcode)];
+      HEAP[$22]=$24;
+      var $25=HEAP[$opcode];
       $1=$25;
       __label__ = 4; break;
     case 4: 
@@ -8707,73 +8647,45 @@ function _softx86_fetch($ctx, $reserved, $addr, $_buf, $sz) {
       var $31=$2;
       var $32=(($31+128)|0);
       var $33=(($32)|0);
-      var $34=HEAP32[(($33)>>2)];
+      var $34=HEAP[$33];
       var $35=$2;
       var $36=$35;
       var $37=$raddr;
       var $38=$buf;
       var $39=$raddr;
-      var $40$0=$39;
-      var $40$1=0;
-      var $$emscripten$temp$0$0=0;
-      var $$emscripten$temp$0$1=1;
-      var $41$0 = ((($$emscripten$temp$0$0)>>>0)+((($$emscripten$temp$0$1)|0)*4294967296))-((($40$0)>>>0)+((($40$1)|0)*4294967296))>>>0; var $41$1 = Math.min(Math.floor((((($$emscripten$temp$0$0)>>>0)+((($$emscripten$temp$0$1)|0)*4294967296))-((($40$0)>>>0)+((($40$1)|0)*4294967296)))/4294967296), 4294967295);
-      var $$emscripten$temp$1$0=-1;
-      var $$emscripten$temp$1$1=0;
-      var $42$0=$41$0 & $$emscripten$temp$1$0;
-      var $42$1=$41$1 & $$emscripten$temp$1$1;
-      var $43$0=$42$0;
-      var $43=$43$0;
+      var $40=(($39)>>>0);
+      var $41=4294967296-$40;
+      var $42=Runtime.and64($41, 4294967295);
+      var $43=(($42) & 4294967295);
       FUNCTION_TABLE[$34]($36, $37, $38, $43);
       var $44=$raddr;
-      var $45$0=$44;
-      var $45$1=0;
-      var $$emscripten$temp$2$0=0;
-      var $$emscripten$temp$2$1=1;
-      var $46$0 = ((($$emscripten$temp$2$0)>>>0)+((($$emscripten$temp$2$1)|0)*4294967296))-((($45$0)>>>0)+((($45$1)|0)*4294967296))>>>0; var $46$1 = Math.min(Math.floor((((($$emscripten$temp$2$0)>>>0)+((($$emscripten$temp$2$1)|0)*4294967296))-((($45$0)>>>0)+((($45$1)|0)*4294967296)))/4294967296), 4294967295);
-      var $$emscripten$temp$3$0=-1;
-      var $$emscripten$temp$3$1=0;
-      var $47$0=$46$0 & $$emscripten$temp$3$0;
-      var $47$1=$46$1 & $$emscripten$temp$3$1;
-      var $48$0=$47$0;
-      var $48=$48$0;
+      var $45=(($44)>>>0);
+      var $46=4294967296-$45;
+      var $47=Runtime.and64($46, 4294967295);
+      var $48=(($47) & 4294967295);
       var $49=$raddr;
       var $50=(($49+$48)|0);
       $raddr=$50;
       var $51=$raddr;
-      var $52$0=$51;
-      var $52$1=0;
-      var $$emscripten$temp$4$0=0;
-      var $$emscripten$temp$4$1=1;
-      var $53$0 = ((($$emscripten$temp$4$0)>>>0)+((($$emscripten$temp$4$1)|0)*4294967296))-((($52$0)>>>0)+((($52$1)|0)*4294967296))>>>0; var $53$1 = Math.min(Math.floor((((($$emscripten$temp$4$0)>>>0)+((($$emscripten$temp$4$1)|0)*4294967296))-((($52$0)>>>0)+((($52$1)|0)*4294967296)))/4294967296), 4294967295);
-      var $$emscripten$temp$5$0=-1;
-      var $$emscripten$temp$5$1=0;
-      var $54$0=$53$0 & $$emscripten$temp$5$0;
-      var $54$1=$53$1 & $$emscripten$temp$5$1;
-      var $55$0=$54$0;
-      var $55=$55$0;
+      var $52=(($51)>>>0);
+      var $53=4294967296-$52;
+      var $54=Runtime.and64($53, 4294967295);
+      var $55=(($54) & 4294967295);
       var $56=$rsz;
       var $57=(($56-$55)|0);
       $rsz=$57;
       var $58=$raddr;
-      var $59$0=$58;
-      var $59$1=0;
-      var $$emscripten$temp$6$0=0;
-      var $$emscripten$temp$6$1=1;
-      var $60$0 = ((($$emscripten$temp$6$0)>>>0)+((($$emscripten$temp$6$1)|0)*4294967296))-((($59$0)>>>0)+((($59$1)|0)*4294967296))>>>0; var $60$1 = Math.min(Math.floor((((($$emscripten$temp$6$0)>>>0)+((($$emscripten$temp$6$1)|0)*4294967296))-((($59$0)>>>0)+((($59$1)|0)*4294967296)))/4294967296), 4294967295);
-      var $$emscripten$temp$7$0=-1;
-      var $$emscripten$temp$7$1=0;
-      var $61$0=$60$0 & $$emscripten$temp$7$0;
-      var $61$1=$60$1 & $$emscripten$temp$7$1;
-      var $62$0=$61$0;
-      var $62=$62$0;
+      var $59=(($58)>>>0);
+      var $60=4294967296-$59;
+      var $61=Runtime.and64($60, 4294967295);
+      var $62=(($61) & 4294967295);
       var $63=$buf;
       var $64=(($63+$62)|0);
       $buf=$64;
       var $65=$2;
       var $66=(($65+128)|0);
       var $67=(($66)|0);
-      var $68=HEAP32[(($67)>>2)];
+      var $68=HEAP[$67];
       var $69=$2;
       var $70=$69;
       var $71=$raddr;
@@ -8786,7 +8698,7 @@ function _softx86_fetch($ctx, $reserved, $addr, $_buf, $sz) {
       var $75=$2;
       var $76=(($75+128)|0);
       var $77=(($76)|0);
-      var $78=HEAP32[(($77)>>2)];
+      var $78=HEAP[$77];
       var $79=$2;
       var $80=$79;
       var $81=$raddr;
@@ -8805,7 +8717,7 @@ function _softx86_fetch($ctx, $reserved, $addr, $_buf, $sz) {
 _softx86_fetch["X"]=1;
 
 function _softx86_fetch_dec_byte($ctx) {
-  var __stackBase__  = STACKTOP; STACKTOP += 4; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 1; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -8825,22 +8737,22 @@ function _softx86_fetch_dec_byte($ctx) {
       var $8=$2;
       var $9=(($8+4)|0);
       var $10=(($9+112)|0);
-      var $11=HEAPU16[(($10)>>1)];
+      var $11=HEAP[$10];
       var $12=(($11)&65535);
       var $13=$12 << 4;
       var $14=$2;
       var $15=(($14+4)|0);
       var $16=(($15+116)|0);
-      var $17=HEAP32[(($16)>>2)];
+      var $17=HEAP[$16];
       var $18=(($13+$17)|0);
       var $19=_softx86_fetch($7, 0, $18, $opcode, 1);
       var $20=$2;
       var $21=(($20+4)|0);
       var $22=(($21+116)|0);
-      var $23=HEAP32[(($22)>>2)];
+      var $23=HEAP[$22];
       var $24=(($23+1)|0);
-      HEAP32[(($22)>>2)]=$24;
-      var $25=HEAP8[($opcode)];
+      HEAP[$22]=$24;
+      var $25=HEAP[$opcode];
       $1=$25;
       __label__ = 4; break;
     case 4: 
@@ -8853,7 +8765,7 @@ function _softx86_fetch_dec_byte($ctx) {
 
 
 function _softx86_stack_popw($ctx) {
-  var __stackBase__  = STACKTOP; STACKTOP += 4; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 2; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -8875,14 +8787,14 @@ function _softx86_stack_popw($ctx) {
       var $10=(($9+32)|0);
       var $11=(($10+16)|0);
       var $12=(($11+4)|0);
-      var $13=HEAP32[(($12)>>2)];
+      var $13=HEAP[$12];
       var $14=$2;
       var $15=(($14+4)|0);
       var $16=(($15)|0);
       var $17=(($16+16)|0);
       var $18=$17;
       var $19=(($18)|0);
-      var $20=HEAPU16[(($19)>>1)];
+      var $20=HEAP[$19];
       var $21=(($20)&65535);
       var $22=(($13+$21)|0);
       var $23=$data;
@@ -8893,12 +8805,12 @@ function _softx86_stack_popw($ctx) {
       var $28=(($27+16)|0);
       var $29=$28;
       var $30=(($29)|0);
-      var $31=HEAPU16[(($30)>>1)];
+      var $31=HEAP[$30];
       var $32=(($31)&65535);
       var $33=(($32+2)|0);
       var $34=(($33) & 65535);
-      HEAP16[(($30)>>1)]=$34;
-      var $35=HEAP16[(($data)>>1)];
+      HEAP[$30]=$34;
+      var $35=HEAP[$data];
       $1=$35;
       __label__ = 4; break;
     case 4: 
@@ -8911,38 +8823,38 @@ function _softx86_stack_popw($ctx) {
 
 
 function _softx86_stack_pushw($ctx, $data) {
-  var __stackBase__  = STACKTOP; STACKTOP += 4; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 2; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
 
   var $1;
   var $2=__stackBase__;
   $1=$ctx;
-  HEAP16[(($2)>>1)]=$data;
+  HEAP[$2]=$data;
   var $3=$1;
   var $4=(($3+4)|0);
   var $5=(($4)|0);
   var $6=(($5+16)|0);
   var $7=$6;
   var $8=(($7)|0);
-  var $9=HEAPU16[(($8)>>1)];
+  var $9=HEAP[$8];
   var $10=(($9)&65535);
   var $11=(($10-2)|0);
   var $12=(($11) & 65535);
-  HEAP16[(($8)>>1)]=$12;
+  HEAP[$8]=$12;
   var $13=$1;
   var $14=$1;
   var $15=(($14+4)|0);
   var $16=(($15+32)|0);
   var $17=(($16+16)|0);
   var $18=(($17+4)|0);
-  var $19=HEAP32[(($18)>>2)];
+  var $19=HEAP[$18];
   var $20=$1;
   var $21=(($20+4)|0);
   var $22=(($21)|0);
   var $23=(($22+16)|0);
   var $24=$23;
   var $25=(($24)|0);
-  var $26=HEAPU16[(($25)>>1)];
+  var $26=HEAP[$25];
   var $27=(($26)&65535);
   var $28=(($19+$27)|0);
   var $29=$2;
@@ -9009,73 +8921,45 @@ function _softx86_write($ctx, $reserved, $addr, $_buf, $sz) {
       var $31=$2;
       var $32=(($31+128)|0);
       var $33=(($32+8)|0);
-      var $34=HEAP32[(($33)>>2)];
+      var $34=HEAP[$33];
       var $35=$2;
       var $36=$35;
       var $37=$raddr;
       var $38=$buf;
       var $39=$raddr;
-      var $40$0=$39;
-      var $40$1=0;
-      var $$emscripten$temp$0$0=0;
-      var $$emscripten$temp$0$1=1;
-      var $41$0 = ((($$emscripten$temp$0$0)>>>0)+((($$emscripten$temp$0$1)|0)*4294967296))-((($40$0)>>>0)+((($40$1)|0)*4294967296))>>>0; var $41$1 = Math.min(Math.floor((((($$emscripten$temp$0$0)>>>0)+((($$emscripten$temp$0$1)|0)*4294967296))-((($40$0)>>>0)+((($40$1)|0)*4294967296)))/4294967296), 4294967295);
-      var $$emscripten$temp$1$0=-1;
-      var $$emscripten$temp$1$1=0;
-      var $42$0=$41$0 & $$emscripten$temp$1$0;
-      var $42$1=$41$1 & $$emscripten$temp$1$1;
-      var $43$0=$42$0;
-      var $43=$43$0;
+      var $40=(($39)>>>0);
+      var $41=4294967296-$40;
+      var $42=Runtime.and64($41, 4294967295);
+      var $43=(($42) & 4294967295);
       FUNCTION_TABLE[$34]($36, $37, $38, $43);
       var $44=$raddr;
-      var $45$0=$44;
-      var $45$1=0;
-      var $$emscripten$temp$2$0=0;
-      var $$emscripten$temp$2$1=1;
-      var $46$0 = ((($$emscripten$temp$2$0)>>>0)+((($$emscripten$temp$2$1)|0)*4294967296))-((($45$0)>>>0)+((($45$1)|0)*4294967296))>>>0; var $46$1 = Math.min(Math.floor((((($$emscripten$temp$2$0)>>>0)+((($$emscripten$temp$2$1)|0)*4294967296))-((($45$0)>>>0)+((($45$1)|0)*4294967296)))/4294967296), 4294967295);
-      var $$emscripten$temp$3$0=-1;
-      var $$emscripten$temp$3$1=0;
-      var $47$0=$46$0 & $$emscripten$temp$3$0;
-      var $47$1=$46$1 & $$emscripten$temp$3$1;
-      var $48$0=$47$0;
-      var $48=$48$0;
+      var $45=(($44)>>>0);
+      var $46=4294967296-$45;
+      var $47=Runtime.and64($46, 4294967295);
+      var $48=(($47) & 4294967295);
       var $49=$raddr;
       var $50=(($49+$48)|0);
       $raddr=$50;
       var $51=$raddr;
-      var $52$0=$51;
-      var $52$1=0;
-      var $$emscripten$temp$4$0=0;
-      var $$emscripten$temp$4$1=1;
-      var $53$0 = ((($$emscripten$temp$4$0)>>>0)+((($$emscripten$temp$4$1)|0)*4294967296))-((($52$0)>>>0)+((($52$1)|0)*4294967296))>>>0; var $53$1 = Math.min(Math.floor((((($$emscripten$temp$4$0)>>>0)+((($$emscripten$temp$4$1)|0)*4294967296))-((($52$0)>>>0)+((($52$1)|0)*4294967296)))/4294967296), 4294967295);
-      var $$emscripten$temp$5$0=-1;
-      var $$emscripten$temp$5$1=0;
-      var $54$0=$53$0 & $$emscripten$temp$5$0;
-      var $54$1=$53$1 & $$emscripten$temp$5$1;
-      var $55$0=$54$0;
-      var $55=$55$0;
+      var $52=(($51)>>>0);
+      var $53=4294967296-$52;
+      var $54=Runtime.and64($53, 4294967295);
+      var $55=(($54) & 4294967295);
       var $56=$rsz;
       var $57=(($56-$55)|0);
       $rsz=$57;
       var $58=$raddr;
-      var $59$0=$58;
-      var $59$1=0;
-      var $$emscripten$temp$6$0=0;
-      var $$emscripten$temp$6$1=1;
-      var $60$0 = ((($$emscripten$temp$6$0)>>>0)+((($$emscripten$temp$6$1)|0)*4294967296))-((($59$0)>>>0)+((($59$1)|0)*4294967296))>>>0; var $60$1 = Math.min(Math.floor((((($$emscripten$temp$6$0)>>>0)+((($$emscripten$temp$6$1)|0)*4294967296))-((($59$0)>>>0)+((($59$1)|0)*4294967296)))/4294967296), 4294967295);
-      var $$emscripten$temp$7$0=-1;
-      var $$emscripten$temp$7$1=0;
-      var $61$0=$60$0 & $$emscripten$temp$7$0;
-      var $61$1=$60$1 & $$emscripten$temp$7$1;
-      var $62$0=$61$0;
-      var $62=$62$0;
+      var $59=(($58)>>>0);
+      var $60=4294967296-$59;
+      var $61=Runtime.and64($60, 4294967295);
+      var $62=(($61) & 4294967295);
       var $63=$buf;
       var $64=(($63+$62)|0);
       $buf=$64;
       var $65=$2;
       var $66=(($65+128)|0);
       var $67=(($66+8)|0);
-      var $68=HEAP32[(($67)>>2)];
+      var $68=HEAP[$67];
       var $69=$2;
       var $70=$69;
       var $71=$raddr;
@@ -9088,7 +8972,7 @@ function _softx86_write($ctx, $reserved, $addr, $_buf, $sz) {
       var $75=$2;
       var $76=(($75+128)|0);
       var $77=(($76+8)|0);
-      var $78=HEAP32[(($77)>>2)];
+      var $78=HEAP[$77];
       var $79=$2;
       var $80=$79;
       var $81=$raddr;
@@ -9134,7 +9018,7 @@ function _softx86_set_stack_ptr($ctx, $ss, $sp) {
       var $14=(($13+16)|0);
       var $15=$14;
       var $16=(($15)|0);
-      HEAP16[(($16)>>1)]=$10;
+      HEAP[$16]=$10;
       var $17=$2;
       var $18=$3;
       var $19=_softx86_setsegval($17, 2, $18);
@@ -9173,7 +9057,7 @@ function _softx86_set_instruction_ptr($ctx, $cs, $ip) {
       var $10=$2;
       var $11=(($10+4)|0);
       var $12=(($11+100)|0);
-      HEAP32[(($12)>>2)]=$9;
+      HEAP[$12]=$9;
       var $13=$2;
       var $14=$3;
       var $15=_softx86_setsegval($13, 1, $14);
@@ -9189,7 +9073,7 @@ function _softx86_set_instruction_ptr($ctx, $cs, $ip) {
 
 
 function _softx86_get_intvect($ctx, $i, $seg, $ofs) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 4; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -9200,7 +9084,7 @@ function _softx86_get_intvect($ctx, $i, $seg, $ofs) {
       var $4;
       var $5;
       var $_seg=__stackBase__;
-      var $_ofs=__stackBase__+4;
+      var $_ofs=__stackBase__+2;
       var $o;
       $2=$ctx;
       $3=$i;
@@ -9221,9 +9105,9 @@ function _softx86_get_intvect($ctx, $i, $seg, $ofs) {
       var $14=$o;
       var $15=$_ofs;
       var $16=_softx86_fetch($13, 0, $14, $15, 2);
-      var $17=HEAP16[(($_ofs)>>1)];
+      var $17=HEAP[$_ofs];
       var $18=$5;
-      HEAP16[(($18)>>1)]=$17;
+      HEAP[$18]=$17;
       var $19=$o;
       var $20=(($19+2)|0);
       $o=$20;
@@ -9231,9 +9115,9 @@ function _softx86_get_intvect($ctx, $i, $seg, $ofs) {
       var $22=$o;
       var $23=$_seg;
       var $24=_softx86_fetch($21, 0, $22, $23, 2);
-      var $25=HEAP16[(($_seg)>>1)];
+      var $25=HEAP[$_seg];
       var $26=$4;
-      HEAP16[(($26)>>1)]=$25;
+      HEAP[$26]=$25;
       $1=1;
       __label__ = 4; break;
     case 4: 
@@ -9246,7 +9130,7 @@ function _softx86_get_intvect($ctx, $i, $seg, $ofs) {
 
 
 function _softx86_go_int_frame($ctx, $i) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 4; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -9254,7 +9138,7 @@ function _softx86_go_int_frame($ctx, $i) {
       var $1;
       var $2;
       var $seg=__stackBase__;
-      var $ofs=__stackBase__+4;
+      var $ofs=__stackBase__+2;
       $1=$ctx;
       $2=$i;
       var $3=$1;
@@ -9270,7 +9154,7 @@ function _softx86_go_int_frame($ctx, $i) {
       var $11=(($10+4)|0);
       var $12=(($11+96)|0);
       var $13=$12;
-      var $14=HEAP32[(($13)>>2)];
+      var $14=HEAP[$13];
       var $15=(($14) & 65535);
       _softx86_stack_pushw($9, $15);
       var $16=$1;
@@ -9279,26 +9163,26 @@ function _softx86_go_int_frame($ctx, $i) {
       var $19=(($18+32)|0);
       var $20=(($19+8)|0);
       var $21=(($20)|0);
-      var $22=HEAP16[(($21)>>1)];
+      var $22=HEAP[$21];
       _softx86_stack_pushw($16, $22);
       var $23=$1;
       var $24=$1;
       var $25=(($24+4)|0);
       var $26=(($25+100)|0);
-      var $27=HEAP32[(($26)>>2)];
+      var $27=HEAP[$26];
       var $28=(($27) & 65535);
       _softx86_stack_pushw($23, $28);
       var $29=$1;
       var $30=(($29+4)|0);
       var $31=(($30+96)|0);
       var $32=$31;
-      var $33=HEAP32[(($32)>>2)];
+      var $33=HEAP[$32];
       var $34=$33 & -513;
-      HEAP32[(($32)>>2)]=$34;
+      HEAP[$32]=$34;
       var $35=$1;
-      var $36=HEAPU16[(($seg)>>1)];
+      var $36=HEAP[$seg];
       var $37=(($36)&65535);
-      var $38=HEAPU16[(($ofs)>>1)];
+      var $38=HEAP[$ofs];
       var $39=(($38)&65535);
       var $40=_softx86_set_instruction_ptr($35, $37, $39);
       var $41=(($40)|0)!=0;
@@ -9334,7 +9218,7 @@ function _softx86_ext_hw_signal($ctx, $i) {
       var $8=$2;
       var $9=(($8+4)|0);
       var $10=(($9+120)|0);
-      var $11=HEAP8[($10)];
+      var $11=HEAP[$10];
       var $12=(($11 << 24) >> 24)!=0;
       if ($12) { __label__ = 4; break; } else { __label__ = 5; break; }
     case 4: 
@@ -9344,7 +9228,7 @@ function _softx86_ext_hw_signal($ctx, $i) {
       var $15=$2;
       var $16=(($15+128)|0);
       var $17=(($16+16)|0);
-      var $18=HEAP32[(($17)>>2)];
+      var $18=HEAP[$17];
       var $19=$2;
       var $20=$19;
       var $21=$3;
@@ -9352,12 +9236,12 @@ function _softx86_ext_hw_signal($ctx, $i) {
       var $22=$2;
       var $23=(($22+4)|0);
       var $24=(($23+120)|0);
-      HEAP8[($24)]=1;
+      HEAP[$24]=1;
       var $25=$3;
       var $26=$2;
       var $27=(($26+4)|0);
       var $28=(($27+121)|0);
-      HEAP8[($28)]=$25;
+      HEAP[$28]=$25;
       $1=1;
       __label__ = 6; break;
     case 6: 
@@ -9388,7 +9272,7 @@ function _softx86_ext_hw_nmi_signal($ctx) {
       var $7=$2;
       var $8=(($7+4)|0);
       var $9=(($8+122)|0);
-      var $10=HEAP8[($9)];
+      var $10=HEAP[$9];
       var $11=(($10 << 24) >> 24)!=0;
       if ($11) { __label__ = 4; break; } else { __label__ = 5; break; }
     case 4: 
@@ -9398,11 +9282,11 @@ function _softx86_ext_hw_nmi_signal($ctx) {
       var $14=$2;
       var $15=(($14+4)|0);
       var $16=(($15+122)|0);
-      HEAP8[($16)]=1;
+      HEAP[$16]=1;
       var $17=$2;
       var $18=(($17+128)|0);
       var $19=(($18+28)|0);
-      var $20=HEAP32[(($19)>>2)];
+      var $20=HEAP[$19];
       var $21=$2;
       var $22=$21;
       FUNCTION_TABLE[$20]($22);
@@ -9438,7 +9322,7 @@ function _softx86_int_sw_signal($ctx, $i) {
       var $8=$2;
       var $9=(($8+128)|0);
       var $10=(($9+20)|0);
-      var $11=HEAP32[(($10)>>2)];
+      var $11=HEAP[$10];
       var $12=$2;
       var $13=$12;
       var $14=$3;
@@ -9476,7 +9360,7 @@ function _softx86_ext_hw_ack($ctx) {
       var $7=$2;
       var $8=(($7+4)|0);
       var $9=(($8+120)|0);
-      var $10=HEAP8[($9)];
+      var $10=HEAP[$9];
       var $11=(($10 << 24) >> 24)!=0;
       if ($11) { __label__ = 5; break; } else { __label__ = 4; break; }
     case 4: 
@@ -9486,22 +9370,22 @@ function _softx86_ext_hw_ack($ctx) {
       var $14=$2;
       var $15=(($14+128)|0);
       var $16=(($15+24)|0);
-      var $17=HEAP32[(($16)>>2)];
+      var $17=HEAP[$16];
       var $18=$2;
       var $19=$18;
       var $20=$2;
       var $21=(($20+4)|0);
       var $22=(($21+121)|0);
-      var $23=HEAP8[($22)];
+      var $23=HEAP[$22];
       FUNCTION_TABLE[$17]($19, $23);
       var $24=$2;
       var $25=(($24+4)|0);
       var $26=(($25+120)|0);
-      HEAP8[($26)]=0;
+      HEAP[$26]=0;
       var $27=$2;
       var $28=(($27+4)|0);
       var $29=(($28+121)|0);
-      HEAP8[($29)]=0;
+      HEAP[$29]=0;
       $1=1;
       __label__ = 6; break;
     case 6: 
@@ -9532,7 +9416,7 @@ function _softx86_ext_hw_nmi_ack($ctx) {
       var $7=$2;
       var $8=(($7+4)|0);
       var $9=(($8+122)|0);
-      var $10=HEAP8[($9)];
+      var $10=HEAP[$9];
       var $11=(($10 << 24) >> 24)!=0;
       if ($11) { __label__ = 5; break; } else { __label__ = 4; break; }
     case 4: 
@@ -9542,14 +9426,14 @@ function _softx86_ext_hw_nmi_ack($ctx) {
       var $14=$2;
       var $15=(($14+128)|0);
       var $16=(($15+32)|0);
-      var $17=HEAP32[(($16)>>2)];
+      var $17=HEAP[$16];
       var $18=$2;
       var $19=$18;
       FUNCTION_TABLE[$17]($19);
       var $20=$2;
       var $21=(($20+4)|0);
       var $22=(($21+122)|0);
-      HEAP8[($22)]=0;
+      HEAP[$22]=0;
       $1=1;
       __label__ = 6; break;
     case 6: 
@@ -9582,19 +9466,19 @@ function _softx86_decompile_exec_cs_ip($ctx) {
       var $9=(($8+32)|0);
       var $10=(($9+8)|0);
       var $11=(($10)|0);
-      var $12=HEAP16[(($11)>>1)];
+      var $12=HEAP[$11];
       var $13=$2;
       var $14=(($13+4)|0);
       var $15=(($14+112)|0);
-      HEAP16[(($15)>>1)]=$12;
+      HEAP[$15]=$12;
       var $16=$2;
       var $17=(($16+4)|0);
       var $18=(($17+100)|0);
-      var $19=HEAP32[(($18)>>2)];
+      var $19=HEAP[$18];
       var $20=$2;
       var $21=(($20+4)|0);
       var $22=(($21+116)|0);
-      HEAP32[(($22)>>2)]=$19;
+      HEAP[$22]=$19;
       $1=1;
       __label__ = 4; break;
     case 4: 
@@ -9615,18 +9499,18 @@ function _softx86_bswap2($x) {
   $1=$x;
   var $2=$1;
   var $3=(($2)|0);
-  var $4=HEAP8[($3)];
+  var $4=HEAP[$3];
   $t=$4;
   var $5=$1;
   var $6=(($5+1)|0);
-  var $7=HEAP8[($6)];
+  var $7=HEAP[$6];
   var $8=$1;
   var $9=(($8)|0);
-  HEAP8[($9)]=$7;
+  HEAP[$9]=$7;
   var $10=$t;
   var $11=$1;
   var $12=(($11+1)|0);
-  HEAP8[($12)]=$10;
+  HEAP[$12]=$10;
   ;
   return;
 }
@@ -9641,32 +9525,32 @@ function _softx86_bswap4($x) {
   $1=$x;
   var $2=$1;
   var $3=(($2)|0);
-  var $4=HEAP8[($3)];
+  var $4=HEAP[$3];
   $t=$4;
   var $5=$1;
   var $6=(($5+3)|0);
-  var $7=HEAP8[($6)];
+  var $7=HEAP[$6];
   var $8=$1;
   var $9=(($8)|0);
-  HEAP8[($9)]=$7;
+  HEAP[$9]=$7;
   var $10=$t;
   var $11=$1;
   var $12=(($11+3)|0);
-  HEAP8[($12)]=$10;
+  HEAP[$12]=$10;
   var $13=$1;
   var $14=(($13+1)|0);
-  var $15=HEAP8[($14)];
+  var $15=HEAP[$14];
   $t=$15;
   var $16=$1;
   var $17=(($16+2)|0);
-  var $18=HEAP8[($17)];
+  var $18=HEAP[$17];
   var $19=$1;
   var $20=(($19+1)|0);
-  HEAP8[($20)]=$18;
+  HEAP[$20]=$18;
   var $21=$t;
   var $22=$1;
   var $23=(($22+2)|0);
-  HEAP8[($23)]=$21;
+  HEAP[$23]=$21;
   ;
   return;
 }
@@ -9698,7 +9582,7 @@ function _softx86_step($ctx) {
     case 3: 
       var $7=$2;
       var $8=(($7+184)|0);
-      var $9=HEAP32[(($8)>>2)];
+      var $9=HEAP[$8];
       var $10=$9;
       $sop=$10;
       var $11=$sop;
@@ -9710,31 +9594,31 @@ function _softx86_step($ctx) {
     case 5: 
       var $15=$2;
       var $16=(($15+236)|0);
-      HEAP8[($16)]=0;
+      HEAP[$16]=0;
       var $17=$2;
       var $18=(($17+238)|0);
-      HEAP16[(($18)>>1)]=0;
+      HEAP[$18]=0;
       var $19=$2;
       var $20=(($19+240)|0);
-      HEAP8[($20)]=0;
+      HEAP[$20]=0;
       var $21=$2;
       var $22=(($21+4)|0);
       var $23=(($22+32)|0);
       var $24=(($23+8)|0);
       var $25=(($24)|0);
-      var $26=HEAP16[(($25)>>1)];
+      var $26=HEAP[$25];
       var $27=$2;
       var $28=(($27+4)|0);
       var $29=(($28+104)|0);
-      HEAP16[(($29)>>1)]=$26;
+      HEAP[$29]=$26;
       var $30=$2;
       var $31=(($30+4)|0);
       var $32=(($31+100)|0);
-      var $33=HEAP32[(($32)>>2)];
+      var $33=HEAP[$32];
       var $34=$2;
       var $35=(($34+4)|0);
       var $36=(($35+108)|0);
-      HEAP32[(($36)>>2)]=$33;
+      HEAP[$36]=$33;
       $lp=1;
       $err=0;
       $count=16;
@@ -9762,7 +9646,7 @@ function _softx86_step($ctx) {
       var $50=$2;
       var $51=(($50+180)|0);
       var $52=(($51)|0);
-      var $53=HEAPU8[($52)];
+      var $53=HEAP[$52];
       var $54=(($53)&255);
       var $55=(($54)|0)!=0;
       if ($55) { __label__ = 11; break; } else { __label__ = 19; break; }
@@ -9770,7 +9654,7 @@ function _softx86_step($ctx) {
       var $57=$2;
       var $58=(($57+4)|0);
       var $59=(($58+122)|0);
-      var $60=HEAP8[($59)];
+      var $60=HEAP[$59];
       var $61=(($60 << 24) >> 24)!=0;
       if ($61) { __label__ = 12; break; } else { __label__ = 13; break; }
     case 12: 
@@ -9784,7 +9668,7 @@ function _softx86_step($ctx) {
       var $68=(($67+4)|0);
       var $69=(($68+96)|0);
       var $70=$69;
-      var $71=HEAP32[(($70)>>2)];
+      var $71=HEAP[$70];
       var $72=$71 & 512;
       var $73=(($72)|0)!=0;
       if ($73) { __label__ = 14; break; } else { __label__ = 17; break; }
@@ -9792,7 +9676,7 @@ function _softx86_step($ctx) {
       var $75=$2;
       var $76=(($75+4)|0);
       var $77=(($76+120)|0);
-      var $78=HEAP8[($77)];
+      var $78=HEAP[$77];
       var $79=(($78 << 24) >> 24)!=0;
       if ($79) { __label__ = 15; break; } else { __label__ = 16; break; }
     case 15: 
@@ -9800,7 +9684,7 @@ function _softx86_step($ctx) {
       var $82=$2;
       var $83=(($82+4)|0);
       var $84=(($83+121)|0);
-      var $85=HEAP8[($84)];
+      var $85=HEAP[$84];
       _softx86_go_int_frame($81, $85);
       var $86=$2;
       var $87=_softx86_ext_hw_ack($86);
@@ -9822,7 +9706,7 @@ function _softx86_step($ctx) {
       var $97=(($96)|0);
       var $98=(($97+($95<<3))|0);
       var $99=(($98)|0);
-      var $100=HEAP32[(($99)>>2)];
+      var $100=HEAP[$99];
       var $101=$opcode;
       var $102=$2;
       var $103=FUNCTION_TABLE[$100]($101, $102);
@@ -9885,21 +9769,21 @@ function _softx86_step($ctx) {
       var $132=$2;
       var $133=(($132+4)|0);
       var $134=(($133+104)|0);
-      var $135=HEAP16[(($134)>>1)];
+      var $135=HEAP[$134];
       var $136=$2;
       var $137=(($136+4)|0);
       var $138=(($137+32)|0);
       var $139=(($138+8)|0);
       var $140=(($139)|0);
-      HEAP16[(($140)>>1)]=$135;
+      HEAP[$140]=$135;
       var $141=$2;
       var $142=(($141+4)|0);
       var $143=(($142+108)|0);
-      var $144=HEAP32[(($143)>>2)];
+      var $144=HEAP[$143];
       var $145=$2;
       var $146=(($145+4)|0);
       var $147=(($146+100)|0);
-      HEAP32[(($147)>>2)]=$144;
+      HEAP[$147]=$144;
       __label__ = 36; break;
     case 36: 
       var $149=$err;
@@ -9918,7 +9802,7 @@ function _softx86_step($ctx) {
 _softx86_step["X"]=1;
 
 function _softx86_decompile($ctx, $asmbuf) {
-  var __stackBase__  = STACKTOP; STACKTOP += 256; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 256; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -9945,7 +9829,7 @@ function _softx86_decompile($ctx, $asmbuf) {
     case 3: 
       var $8=$2;
       var $9=(($8+184)|0);
-      var $10=HEAP32[(($9)>>2)];
+      var $10=HEAP[$9];
       var $11=$10;
       $sop=$11;
       var $12=$sop;
@@ -9960,7 +9844,7 @@ function _softx86_decompile($ctx, $asmbuf) {
       $asmx=0;
       var $16=$3;
       var $17=(($16)|0);
-      HEAP8[($17)]=0;
+      HEAP[$17]=0;
       $count=16;
       __label__ = 6; break;
     case 6: 
@@ -9986,7 +9870,7 @@ function _softx86_decompile($ctx, $asmbuf) {
       var $33=(($32)|0);
       var $34=(($33+($31<<3))|0);
       var $35=(($34+4)|0);
-      var $36=HEAP32[(($35)>>2)];
+      var $36=HEAP[$35];
       var $37=$opcode;
       var $38=$2;
       var $39=(($buf)|0);
@@ -10123,7 +10007,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $38=(($37+12)|0);
       var $39=$38;
       var $40=(($39)|0);
-      var $41=HEAPU16[(($40)>>1)];
+      var $41=HEAP[$40];
       var $42=(($41)&65535);
       var $43=$1;
       var $44=(($43+4)|0);
@@ -10131,7 +10015,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $46=(($45+24)|0);
       var $47=$46;
       var $48=(($47)|0);
-      var $49=HEAPU16[(($48)>>1)];
+      var $49=HEAP[$48];
       var $50=(($49)&65535);
       var $51=(($42+$50)|0);
       var $52=(($51) & 65535);
@@ -10149,7 +10033,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $61=(($60+12)|0);
       var $62=$61;
       var $63=(($62)|0);
-      var $64=HEAPU16[(($63)>>1)];
+      var $64=HEAP[$63];
       var $65=(($64)&65535);
       var $66=$1;
       var $67=(($66+4)|0);
@@ -10157,7 +10041,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $69=(($68+28)|0);
       var $70=$69;
       var $71=(($70)|0);
-      var $72=HEAPU16[(($71)>>1)];
+      var $72=HEAP[$71];
       var $73=(($72)&65535);
       var $74=(($65+$73)|0);
       var $75=(($74) & 65535);
@@ -10175,7 +10059,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $84=(($83+20)|0);
       var $85=$84;
       var $86=(($85)|0);
-      var $87=HEAPU16[(($86)>>1)];
+      var $87=HEAP[$86];
       var $88=(($87)&65535);
       var $89=$1;
       var $90=(($89+4)|0);
@@ -10183,7 +10067,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $92=(($91+24)|0);
       var $93=$92;
       var $94=(($93)|0);
-      var $95=HEAPU16[(($94)>>1)];
+      var $95=HEAP[$94];
       var $96=(($95)&65535);
       var $97=(($88+$96)|0);
       var $98=(($97) & 65535);
@@ -10201,7 +10085,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $107=(($106+20)|0);
       var $108=$107;
       var $109=(($108)|0);
-      var $110=HEAPU16[(($109)>>1)];
+      var $110=HEAP[$109];
       var $111=(($110)&65535);
       var $112=$1;
       var $113=(($112+4)|0);
@@ -10209,7 +10093,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $115=(($114+28)|0);
       var $116=$115;
       var $117=(($116)|0);
-      var $118=HEAPU16[(($117)>>1)];
+      var $118=HEAP[$117];
       var $119=(($118)&65535);
       var $120=(($111+$119)|0);
       var $121=(($120) & 65535);
@@ -10227,7 +10111,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $130=(($129+24)|0);
       var $131=$130;
       var $132=(($131)|0);
-      var $133=HEAP16[(($132)>>1)];
+      var $133=HEAP[$132];
       $ofs=$133;
       __label__ = 22; break;
     case 16: 
@@ -10242,7 +10126,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $142=(($141+28)|0);
       var $143=$142;
       var $144=(($143)|0);
-      var $145=HEAP16[(($144)>>1)];
+      var $145=HEAP[$144];
       $ofs=$145;
       __label__ = 21; break;
     case 18: 
@@ -10257,7 +10141,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $154=(($153+12)|0);
       var $155=$154;
       var $156=(($155)|0);
-      var $157=HEAP16[(($156)>>1)];
+      var $157=HEAP[$156];
       $ofs=$157;
       __label__ = 20; break;
     case 20: 
@@ -10288,7 +10172,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $174=(($173+12)|0);
       var $175=$174;
       var $176=(($175)|0);
-      var $177=HEAPU16[(($176)>>1)];
+      var $177=HEAP[$176];
       var $178=(($177)&65535);
       var $179=$1;
       var $180=(($179+4)|0);
@@ -10296,7 +10180,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $182=(($181+24)|0);
       var $183=$182;
       var $184=(($183)|0);
-      var $185=HEAPU16[(($184)>>1)];
+      var $185=HEAP[$184];
       var $186=(($185)&65535);
       var $187=(($178+$186)|0);
       var $188=(($187) & 65535);
@@ -10314,7 +10198,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $197=(($196+12)|0);
       var $198=$197;
       var $199=(($198)|0);
-      var $200=HEAPU16[(($199)>>1)];
+      var $200=HEAP[$199];
       var $201=(($200)&65535);
       var $202=$1;
       var $203=(($202+4)|0);
@@ -10322,7 +10206,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $205=(($204+28)|0);
       var $206=$205;
       var $207=(($206)|0);
-      var $208=HEAPU16[(($207)>>1)];
+      var $208=HEAP[$207];
       var $209=(($208)&65535);
       var $210=(($201+$209)|0);
       var $211=(($210) & 65535);
@@ -10340,7 +10224,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $220=(($219+20)|0);
       var $221=$220;
       var $222=(($221)|0);
-      var $223=HEAPU16[(($222)>>1)];
+      var $223=HEAP[$222];
       var $224=(($223)&65535);
       var $225=$1;
       var $226=(($225+4)|0);
@@ -10348,7 +10232,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $228=(($227+24)|0);
       var $229=$228;
       var $230=(($229)|0);
-      var $231=HEAPU16[(($230)>>1)];
+      var $231=HEAP[$230];
       var $232=(($231)&65535);
       var $233=(($224+$232)|0);
       var $234=(($233) & 65535);
@@ -10366,7 +10250,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $243=(($242+20)|0);
       var $244=$243;
       var $245=(($244)|0);
-      var $246=HEAPU16[(($245)>>1)];
+      var $246=HEAP[$245];
       var $247=(($246)&65535);
       var $248=$1;
       var $249=(($248+4)|0);
@@ -10374,7 +10258,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $251=(($250+28)|0);
       var $252=$251;
       var $253=(($252)|0);
-      var $254=HEAPU16[(($253)>>1)];
+      var $254=HEAP[$253];
       var $255=(($254)&65535);
       var $256=(($247+$255)|0);
       var $257=(($256) & 65535);
@@ -10392,7 +10276,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $266=(($265+24)|0);
       var $267=$266;
       var $268=(($267)|0);
-      var $269=HEAP16[(($268)>>1)];
+      var $269=HEAP[$268];
       $ofs=$269;
       __label__ = 47; break;
     case 38: 
@@ -10407,7 +10291,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $278=(($277+28)|0);
       var $279=$278;
       var $280=(($279)|0);
-      var $281=HEAP16[(($280)>>1)];
+      var $281=HEAP[$280];
       $ofs=$281;
       __label__ = 46; break;
     case 40: 
@@ -10422,7 +10306,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $290=(($289+20)|0);
       var $291=$290;
       var $292=(($291)|0);
-      var $293=HEAP16[(($292)>>1)];
+      var $293=HEAP[$292];
       $ofs=$293;
       __label__ = 45; break;
     case 42: 
@@ -10437,7 +10321,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $302=(($301+12)|0);
       var $303=$302;
       var $304=(($303)|0);
-      var $305=HEAP16[(($304)>>1)];
+      var $305=HEAP[$304];
       $ofs=$305;
       __label__ = 44; break;
     case 44: 
@@ -10513,7 +10397,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
       var $358=(($357+($354<<2))|0);
       var $359=$358;
       var $360=(($359)|0);
-      HEAP16[(($360)>>1)]=$352;
+      HEAP[$360]=$352;
       __label__ = 58; break;
     case 58: 
       ;
@@ -10524,7 +10408,7 @@ function _sx86_exec_full_modregrm_lea($ctx, $d32, $mod, $reg, $rm) {
 _sx86_exec_full_modregrm_lea["X"]=1;
 
 function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap, $op8, $op16, $op32) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 3; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -10550,7 +10434,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $regv3;
       var $rmv4=__stackBase__;
       var $regv5;
-      var $rmv6=__stackBase__+4;
+      var $rmv6=__stackBase__+2;
       $1=$ctx;
       $2=$w16;
       $3=$d32;
@@ -10578,7 +10462,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $23=(($22+($19<<2))|0);
       var $24=$23;
       var $25=(($24)|0);
-      var $26=HEAP16[(($25)>>1)];
+      var $26=HEAP[$25];
       $regv=$26;
       var $27=$6;
       var $28=(($27)&255);
@@ -10588,7 +10472,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $32=(($31+($28<<2))|0);
       var $33=$32;
       var $34=(($33)|0);
-      var $35=HEAP16[(($34)>>1)];
+      var $35=HEAP[$34];
       $rmv=$35;
       var $36=$7;
       var $37=(($36 << 24) >> 24)!=0;
@@ -10607,7 +10491,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $49=(($48+($45<<2))|0);
       var $50=$49;
       var $51=(($50)|0);
-      HEAP16[(($51)>>1)]=$43;
+      HEAP[$51]=$43;
       __label__ = 6; break;
     case 5: 
       var $53=$9;
@@ -10623,7 +10507,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $63=(($62+($59<<2))|0);
       var $64=$63;
       var $65=(($64)|0);
-      HEAP16[(($65)>>1)]=$57;
+      HEAP[$65]=$57;
       __label__ = 6; break;
     case 6: 
       __label__ = 11; break;
@@ -10633,16 +10517,16 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $70=$1;
       var $71=(($70+204)|0);
       var $72=(($71+($69<<2))|0);
-      var $73=HEAP32[(($72)>>2)];
-      var $74=HEAP8[($73)];
+      var $73=HEAP[$72];
+      var $74=HEAP[$73];
       $regv1=$74;
       var $75=$6;
       var $76=(($75)&255);
       var $77=$1;
       var $78=(($77+204)|0);
       var $79=(($78+($76<<2))|0);
-      var $80=HEAP32[(($79)>>2)];
-      var $81=HEAP8[($80)];
+      var $80=HEAP[$79];
+      var $81=HEAP[$80];
       $rmv2=$81;
       var $82=$7;
       var $83=(($82 << 24) >> 24)!=0;
@@ -10658,8 +10542,8 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $92=$1;
       var $93=(($92+204)|0);
       var $94=(($93+($91<<2))|0);
-      var $95=HEAP32[(($94)>>2)];
-      HEAP8[($95)]=$89;
+      var $95=HEAP[$94];
+      HEAP[$95]=$89;
       __label__ = 10; break;
     case 9: 
       var $97=$8;
@@ -10672,8 +10556,8 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $104=$1;
       var $105=(($104+204)|0);
       var $106=(($105+($103<<2))|0);
-      var $107=HEAP32[(($106)>>2)];
-      HEAP8[($107)]=$101;
+      var $107=HEAP[$106];
+      HEAP[$107]=$101;
       __label__ = 10; break;
     case 10: 
       __label__ = 11; break;
@@ -10682,7 +10566,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
     case 12: 
       var $111=$1;
       var $112=(($111+236)|0);
-      var $113=HEAP8[($112)];
+      var $113=HEAP[$112];
       var $114=(($113 << 24) >> 24)!=0;
       if ($114) { __label__ = 21; break; } else { __label__ = 13; break; }
     case 13: 
@@ -10716,7 +10600,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $138=(($137+32)|0);
       var $139=(($138+16)|0);
       var $140=(($139)|0);
-      var $141=HEAP16[(($140)>>1)];
+      var $141=HEAP[$140];
       $seg=$141;
       __label__ = 20; break;
     case 19: 
@@ -10725,7 +10609,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $145=(($144+32)|0);
       var $146=(($145+24)|0);
       var $147=(($146)|0);
-      var $148=HEAP16[(($147)>>1)];
+      var $148=HEAP[$147];
       $seg=$148;
       __label__ = 20; break;
     case 20: 
@@ -10733,7 +10617,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
     case 21: 
       var $151=$1;
       var $152=(($151+238)|0);
-      var $153=HEAP16[(($152)>>1)];
+      var $153=HEAP[$152];
       $seg=$153;
       __label__ = 22; break;
     case 22: 
@@ -10773,7 +10657,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $182=(($181+12)|0);
       var $183=$182;
       var $184=(($183)|0);
-      var $185=HEAPU16[(($184)>>1)];
+      var $185=HEAP[$184];
       var $186=(($185)&65535);
       var $187=$1;
       var $188=(($187+4)|0);
@@ -10781,7 +10665,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $190=(($189+24)|0);
       var $191=$190;
       var $192=(($191)|0);
-      var $193=HEAPU16[(($192)>>1)];
+      var $193=HEAP[$192];
       var $194=(($193)&65535);
       var $195=(($186+$194)|0);
       var $196=(($195) & 65535);
@@ -10799,7 +10683,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $205=(($204+12)|0);
       var $206=$205;
       var $207=(($206)|0);
-      var $208=HEAPU16[(($207)>>1)];
+      var $208=HEAP[$207];
       var $209=(($208)&65535);
       var $210=$1;
       var $211=(($210+4)|0);
@@ -10807,7 +10691,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $213=(($212+28)|0);
       var $214=$213;
       var $215=(($214)|0);
-      var $216=HEAPU16[(($215)>>1)];
+      var $216=HEAP[$215];
       var $217=(($216)&65535);
       var $218=(($209+$217)|0);
       var $219=(($218) & 65535);
@@ -10825,7 +10709,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $228=(($227+20)|0);
       var $229=$228;
       var $230=(($229)|0);
-      var $231=HEAPU16[(($230)>>1)];
+      var $231=HEAP[$230];
       var $232=(($231)&65535);
       var $233=$1;
       var $234=(($233+4)|0);
@@ -10833,7 +10717,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $236=(($235+24)|0);
       var $237=$236;
       var $238=(($237)|0);
-      var $239=HEAPU16[(($238)>>1)];
+      var $239=HEAP[$238];
       var $240=(($239)&65535);
       var $241=(($232+$240)|0);
       var $242=(($241) & 65535);
@@ -10851,7 +10735,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $251=(($250+20)|0);
       var $252=$251;
       var $253=(($252)|0);
-      var $254=HEAPU16[(($253)>>1)];
+      var $254=HEAP[$253];
       var $255=(($254)&65535);
       var $256=$1;
       var $257=(($256+4)|0);
@@ -10859,7 +10743,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $259=(($258+28)|0);
       var $260=$259;
       var $261=(($260)|0);
-      var $262=HEAPU16[(($261)>>1)];
+      var $262=HEAP[$261];
       var $263=(($262)&65535);
       var $264=(($255+$263)|0);
       var $265=(($264) & 65535);
@@ -10877,7 +10761,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $274=(($273+24)|0);
       var $275=$274;
       var $276=(($275)|0);
-      var $277=HEAP16[(($276)>>1)];
+      var $277=HEAP[$276];
       $ofs=$277;
       __label__ = 41; break;
     case 35: 
@@ -10892,7 +10776,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $286=(($285+28)|0);
       var $287=$286;
       var $288=(($287)|0);
-      var $289=HEAP16[(($288)>>1)];
+      var $289=HEAP[$288];
       $ofs=$289;
       __label__ = 40; break;
     case 37: 
@@ -10907,7 +10791,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $298=(($297+12)|0);
       var $299=$298;
       var $300=(($299)|0);
-      var $301=HEAP16[(($300)>>1)];
+      var $301=HEAP[$300];
       $ofs=$301;
       __label__ = 39; break;
     case 39: 
@@ -10938,7 +10822,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $318=(($317+12)|0);
       var $319=$318;
       var $320=(($319)|0);
-      var $321=HEAPU16[(($320)>>1)];
+      var $321=HEAP[$320];
       var $322=(($321)&65535);
       var $323=$1;
       var $324=(($323+4)|0);
@@ -10946,7 +10830,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $326=(($325+24)|0);
       var $327=$326;
       var $328=(($327)|0);
-      var $329=HEAPU16[(($328)>>1)];
+      var $329=HEAP[$328];
       var $330=(($329)&65535);
       var $331=(($322+$330)|0);
       var $332=(($331) & 65535);
@@ -10964,7 +10848,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $341=(($340+12)|0);
       var $342=$341;
       var $343=(($342)|0);
-      var $344=HEAPU16[(($343)>>1)];
+      var $344=HEAP[$343];
       var $345=(($344)&65535);
       var $346=$1;
       var $347=(($346+4)|0);
@@ -10972,7 +10856,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $349=(($348+28)|0);
       var $350=$349;
       var $351=(($350)|0);
-      var $352=HEAPU16[(($351)>>1)];
+      var $352=HEAP[$351];
       var $353=(($352)&65535);
       var $354=(($345+$353)|0);
       var $355=(($354) & 65535);
@@ -10990,7 +10874,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $364=(($363+20)|0);
       var $365=$364;
       var $366=(($365)|0);
-      var $367=HEAPU16[(($366)>>1)];
+      var $367=HEAP[$366];
       var $368=(($367)&65535);
       var $369=$1;
       var $370=(($369+4)|0);
@@ -10998,7 +10882,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $372=(($371+24)|0);
       var $373=$372;
       var $374=(($373)|0);
-      var $375=HEAPU16[(($374)>>1)];
+      var $375=HEAP[$374];
       var $376=(($375)&65535);
       var $377=(($368+$376)|0);
       var $378=(($377) & 65535);
@@ -11016,7 +10900,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $387=(($386+20)|0);
       var $388=$387;
       var $389=(($388)|0);
-      var $390=HEAPU16[(($389)>>1)];
+      var $390=HEAP[$389];
       var $391=(($390)&65535);
       var $392=$1;
       var $393=(($392+4)|0);
@@ -11024,7 +10908,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $395=(($394+28)|0);
       var $396=$395;
       var $397=(($396)|0);
-      var $398=HEAPU16[(($397)>>1)];
+      var $398=HEAP[$397];
       var $399=(($398)&65535);
       var $400=(($391+$399)|0);
       var $401=(($400) & 65535);
@@ -11042,7 +10926,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $410=(($409+24)|0);
       var $411=$410;
       var $412=(($411)|0);
-      var $413=HEAP16[(($412)>>1)];
+      var $413=HEAP[$412];
       $ofs=$413;
       __label__ = 66; break;
     case 57: 
@@ -11057,7 +10941,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $422=(($421+28)|0);
       var $423=$422;
       var $424=(($423)|0);
-      var $425=HEAP16[(($424)>>1)];
+      var $425=HEAP[$424];
       $ofs=$425;
       __label__ = 65; break;
     case 59: 
@@ -11072,7 +10956,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $434=(($433+20)|0);
       var $435=$434;
       var $436=(($435)|0);
-      var $437=HEAP16[(($436)>>1)];
+      var $437=HEAP[$436];
       $ofs=$437;
       __label__ = 64; break;
     case 61: 
@@ -11087,7 +10971,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $446=(($445+12)|0);
       var $447=$446;
       var $448=(($447)|0);
-      var $449=HEAP16[(($448)>>1)];
+      var $449=HEAP[$448];
       $ofs=$449;
       __label__ = 63; break;
     case 63: 
@@ -11166,7 +11050,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $504=(($503+($500<<2))|0);
       var $505=$504;
       var $506=(($505)|0);
-      var $507=HEAP16[(($506)>>1)];
+      var $507=HEAP[$506];
       $regv3=$507;
       var $508=$seg;
       var $509=(($508)&65535);
@@ -11186,7 +11070,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $521=$9;
       var $522=$1;
       var $523=$regv3;
-      var $524=HEAP16[(($rmv4)>>1)];
+      var $524=HEAP[$rmv4];
       var $525=FUNCTION_TABLE[$521]($522, $523, $524);
       var $526=$5;
       var $527=(($526)&255);
@@ -11196,15 +11080,15 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $531=(($530+($527<<2))|0);
       var $532=$531;
       var $533=(($532)|0);
-      HEAP16[(($533)>>1)]=$525;
+      HEAP[$533]=$525;
       __label__ = 80; break;
     case 79: 
       var $535=$9;
       var $536=$1;
-      var $537=HEAP16[(($rmv4)>>1)];
+      var $537=HEAP[$rmv4];
       var $538=$regv3;
       var $539=FUNCTION_TABLE[$535]($536, $537, $538);
-      HEAP16[(($rmv4)>>1)]=$539;
+      HEAP[$rmv4]=$539;
       var $540=$1;
       var $541=$lo;
       var $542=$rmv4;
@@ -11218,8 +11102,8 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $548=$1;
       var $549=(($548+204)|0);
       var $550=(($549+($547<<2))|0);
-      var $551=HEAP32[(($550)>>2)];
-      var $552=HEAP8[($551)];
+      var $551=HEAP[$550];
+      var $552=HEAP[$551];
       $regv5=$552;
       var $553=$seg;
       var $554=(($553)&65535);
@@ -11238,23 +11122,23 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $565=$8;
       var $566=$1;
       var $567=$regv5;
-      var $568=HEAP8[($rmv6)];
+      var $568=HEAP[$rmv6];
       var $569=FUNCTION_TABLE[$565]($566, $567, $568);
       var $570=$5;
       var $571=(($570)&255);
       var $572=$1;
       var $573=(($572+204)|0);
       var $574=(($573+($571<<2))|0);
-      var $575=HEAP32[(($574)>>2)];
-      HEAP8[($575)]=$569;
+      var $575=HEAP[$574];
+      HEAP[$575]=$569;
       __label__ = 84; break;
     case 83: 
       var $577=$8;
       var $578=$1;
-      var $579=HEAP8[($rmv6)];
+      var $579=HEAP[$rmv6];
       var $580=$regv5;
       var $581=FUNCTION_TABLE[$577]($578, $579, $580);
-      HEAP8[($rmv6)]=$581;
+      HEAP[$rmv6]=$581;
       var $582=$1;
       var $583=$lo;
       var $584=_softx86_write($582, 0, $583, $rmv6, 1);
@@ -11272,7 +11156,7 @@ function _sx86_exec_full_modregrm_rw($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
 _sx86_exec_full_modregrm_rw["X"]=1;
 
 function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap, $op8, $op16, $op32) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 3; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -11298,7 +11182,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $regv3;
       var $rmv4=__stackBase__;
       var $regv5;
-      var $rmv6=__stackBase__+4;
+      var $rmv6=__stackBase__+2;
       $1=$ctx;
       $2=$w16;
       $3=$d32;
@@ -11326,7 +11210,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $23=(($22+($19<<2))|0);
       var $24=$23;
       var $25=(($24)|0);
-      var $26=HEAP16[(($25)>>1)];
+      var $26=HEAP[$25];
       $regv=$26;
       var $27=$6;
       var $28=(($27)&255);
@@ -11336,7 +11220,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $32=(($31+($28<<2))|0);
       var $33=$32;
       var $34=(($33)|0);
-      var $35=HEAP16[(($34)>>1)];
+      var $35=HEAP[$34];
       $rmv=$35;
       var $36=$7;
       var $37=(($36 << 24) >> 24)!=0;
@@ -11363,16 +11247,16 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $54=$1;
       var $55=(($54+204)|0);
       var $56=(($55+($53<<2))|0);
-      var $57=HEAP32[(($56)>>2)];
-      var $58=HEAP8[($57)];
+      var $57=HEAP[$56];
+      var $58=HEAP[$57];
       $regv1=$58;
       var $59=$6;
       var $60=(($59)&255);
       var $61=$1;
       var $62=(($61+204)|0);
       var $63=(($62+($60<<2))|0);
-      var $64=HEAP32[(($63)>>2)];
-      var $65=HEAP8[($64)];
+      var $64=HEAP[$63];
+      var $65=HEAP[$64];
       $rmv2=$65;
       var $66=$7;
       var $67=(($66 << 24) >> 24)!=0;
@@ -11398,7 +11282,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
     case 12: 
       var $83=$1;
       var $84=(($83+236)|0);
-      var $85=HEAP8[($84)];
+      var $85=HEAP[$84];
       var $86=(($85 << 24) >> 24)!=0;
       if ($86) { __label__ = 21; break; } else { __label__ = 13; break; }
     case 13: 
@@ -11432,7 +11316,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $110=(($109+32)|0);
       var $111=(($110+16)|0);
       var $112=(($111)|0);
-      var $113=HEAP16[(($112)>>1)];
+      var $113=HEAP[$112];
       $seg=$113;
       __label__ = 20; break;
     case 19: 
@@ -11441,7 +11325,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $117=(($116+32)|0);
       var $118=(($117+24)|0);
       var $119=(($118)|0);
-      var $120=HEAP16[(($119)>>1)];
+      var $120=HEAP[$119];
       $seg=$120;
       __label__ = 20; break;
     case 20: 
@@ -11449,7 +11333,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
     case 21: 
       var $123=$1;
       var $124=(($123+238)|0);
-      var $125=HEAP16[(($124)>>1)];
+      var $125=HEAP[$124];
       $seg=$125;
       __label__ = 22; break;
     case 22: 
@@ -11489,7 +11373,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $154=(($153+12)|0);
       var $155=$154;
       var $156=(($155)|0);
-      var $157=HEAPU16[(($156)>>1)];
+      var $157=HEAP[$156];
       var $158=(($157)&65535);
       var $159=$1;
       var $160=(($159+4)|0);
@@ -11497,7 +11381,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $162=(($161+24)|0);
       var $163=$162;
       var $164=(($163)|0);
-      var $165=HEAPU16[(($164)>>1)];
+      var $165=HEAP[$164];
       var $166=(($165)&65535);
       var $167=(($158+$166)|0);
       var $168=(($167) & 65535);
@@ -11515,7 +11399,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $177=(($176+12)|0);
       var $178=$177;
       var $179=(($178)|0);
-      var $180=HEAPU16[(($179)>>1)];
+      var $180=HEAP[$179];
       var $181=(($180)&65535);
       var $182=$1;
       var $183=(($182+4)|0);
@@ -11523,7 +11407,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $185=(($184+28)|0);
       var $186=$185;
       var $187=(($186)|0);
-      var $188=HEAPU16[(($187)>>1)];
+      var $188=HEAP[$187];
       var $189=(($188)&65535);
       var $190=(($181+$189)|0);
       var $191=(($190) & 65535);
@@ -11541,7 +11425,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $200=(($199+20)|0);
       var $201=$200;
       var $202=(($201)|0);
-      var $203=HEAPU16[(($202)>>1)];
+      var $203=HEAP[$202];
       var $204=(($203)&65535);
       var $205=$1;
       var $206=(($205+4)|0);
@@ -11549,7 +11433,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $208=(($207+24)|0);
       var $209=$208;
       var $210=(($209)|0);
-      var $211=HEAPU16[(($210)>>1)];
+      var $211=HEAP[$210];
       var $212=(($211)&65535);
       var $213=(($204+$212)|0);
       var $214=(($213) & 65535);
@@ -11567,7 +11451,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $223=(($222+20)|0);
       var $224=$223;
       var $225=(($224)|0);
-      var $226=HEAPU16[(($225)>>1)];
+      var $226=HEAP[$225];
       var $227=(($226)&65535);
       var $228=$1;
       var $229=(($228+4)|0);
@@ -11575,7 +11459,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $231=(($230+28)|0);
       var $232=$231;
       var $233=(($232)|0);
-      var $234=HEAPU16[(($233)>>1)];
+      var $234=HEAP[$233];
       var $235=(($234)&65535);
       var $236=(($227+$235)|0);
       var $237=(($236) & 65535);
@@ -11593,7 +11477,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $246=(($245+24)|0);
       var $247=$246;
       var $248=(($247)|0);
-      var $249=HEAP16[(($248)>>1)];
+      var $249=HEAP[$248];
       $ofs=$249;
       __label__ = 41; break;
     case 35: 
@@ -11608,7 +11492,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $258=(($257+28)|0);
       var $259=$258;
       var $260=(($259)|0);
-      var $261=HEAP16[(($260)>>1)];
+      var $261=HEAP[$260];
       $ofs=$261;
       __label__ = 40; break;
     case 37: 
@@ -11623,7 +11507,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $270=(($269+12)|0);
       var $271=$270;
       var $272=(($271)|0);
-      var $273=HEAP16[(($272)>>1)];
+      var $273=HEAP[$272];
       $ofs=$273;
       __label__ = 39; break;
     case 39: 
@@ -11654,7 +11538,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $290=(($289+12)|0);
       var $291=$290;
       var $292=(($291)|0);
-      var $293=HEAPU16[(($292)>>1)];
+      var $293=HEAP[$292];
       var $294=(($293)&65535);
       var $295=$1;
       var $296=(($295+4)|0);
@@ -11662,7 +11546,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $298=(($297+24)|0);
       var $299=$298;
       var $300=(($299)|0);
-      var $301=HEAPU16[(($300)>>1)];
+      var $301=HEAP[$300];
       var $302=(($301)&65535);
       var $303=(($294+$302)|0);
       var $304=(($303) & 65535);
@@ -11680,7 +11564,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $313=(($312+12)|0);
       var $314=$313;
       var $315=(($314)|0);
-      var $316=HEAPU16[(($315)>>1)];
+      var $316=HEAP[$315];
       var $317=(($316)&65535);
       var $318=$1;
       var $319=(($318+4)|0);
@@ -11688,7 +11572,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $321=(($320+28)|0);
       var $322=$321;
       var $323=(($322)|0);
-      var $324=HEAPU16[(($323)>>1)];
+      var $324=HEAP[$323];
       var $325=(($324)&65535);
       var $326=(($317+$325)|0);
       var $327=(($326) & 65535);
@@ -11706,7 +11590,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $336=(($335+20)|0);
       var $337=$336;
       var $338=(($337)|0);
-      var $339=HEAPU16[(($338)>>1)];
+      var $339=HEAP[$338];
       var $340=(($339)&65535);
       var $341=$1;
       var $342=(($341+4)|0);
@@ -11714,7 +11598,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $344=(($343+24)|0);
       var $345=$344;
       var $346=(($345)|0);
-      var $347=HEAPU16[(($346)>>1)];
+      var $347=HEAP[$346];
       var $348=(($347)&65535);
       var $349=(($340+$348)|0);
       var $350=(($349) & 65535);
@@ -11732,7 +11616,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $359=(($358+20)|0);
       var $360=$359;
       var $361=(($360)|0);
-      var $362=HEAPU16[(($361)>>1)];
+      var $362=HEAP[$361];
       var $363=(($362)&65535);
       var $364=$1;
       var $365=(($364+4)|0);
@@ -11740,7 +11624,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $367=(($366+28)|0);
       var $368=$367;
       var $369=(($368)|0);
-      var $370=HEAPU16[(($369)>>1)];
+      var $370=HEAP[$369];
       var $371=(($370)&65535);
       var $372=(($363+$371)|0);
       var $373=(($372) & 65535);
@@ -11758,7 +11642,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $382=(($381+24)|0);
       var $383=$382;
       var $384=(($383)|0);
-      var $385=HEAP16[(($384)>>1)];
+      var $385=HEAP[$384];
       $ofs=$385;
       __label__ = 66; break;
     case 57: 
@@ -11773,7 +11657,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $394=(($393+28)|0);
       var $395=$394;
       var $396=(($395)|0);
-      var $397=HEAP16[(($396)>>1)];
+      var $397=HEAP[$396];
       $ofs=$397;
       __label__ = 65; break;
     case 59: 
@@ -11788,7 +11672,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $406=(($405+20)|0);
       var $407=$406;
       var $408=(($407)|0);
-      var $409=HEAP16[(($408)>>1)];
+      var $409=HEAP[$408];
       $ofs=$409;
       __label__ = 64; break;
     case 61: 
@@ -11803,7 +11687,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $418=(($417+12)|0);
       var $419=$418;
       var $420=(($419)|0);
-      var $421=HEAP16[(($420)>>1)];
+      var $421=HEAP[$420];
       $ofs=$421;
       __label__ = 63; break;
     case 63: 
@@ -11882,7 +11766,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $476=(($475+($472<<2))|0);
       var $477=$476;
       var $478=(($477)|0);
-      var $479=HEAP16[(($478)>>1)];
+      var $479=HEAP[$478];
       $regv3=$479;
       var $480=$seg;
       var $481=(($480)&65535);
@@ -11902,13 +11786,13 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $493=$9;
       var $494=$1;
       var $495=$regv3;
-      var $496=HEAP16[(($rmv4)>>1)];
+      var $496=HEAP[$rmv4];
       var $497=FUNCTION_TABLE[$493]($494, $495, $496);
       __label__ = 80; break;
     case 79: 
       var $499=$9;
       var $500=$1;
-      var $501=HEAP16[(($rmv4)>>1)];
+      var $501=HEAP[$rmv4];
       var $502=$regv3;
       var $503=FUNCTION_TABLE[$499]($500, $501, $502);
       __label__ = 80; break;
@@ -11920,8 +11804,8 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $508=$1;
       var $509=(($508+204)|0);
       var $510=(($509+($507<<2))|0);
-      var $511=HEAP32[(($510)>>2)];
-      var $512=HEAP8[($511)];
+      var $511=HEAP[$510];
+      var $512=HEAP[$511];
       $regv5=$512;
       var $513=$seg;
       var $514=(($513)&65535);
@@ -11940,13 +11824,13 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
       var $525=$8;
       var $526=$1;
       var $527=$regv5;
-      var $528=HEAP8[($rmv6)];
+      var $528=HEAP[$rmv6];
       var $529=FUNCTION_TABLE[$525]($526, $527, $528);
       __label__ = 84; break;
     case 83: 
       var $531=$8;
       var $532=$1;
-      var $533=HEAP8[($rmv6)];
+      var $533=HEAP[$rmv6];
       var $534=$regv5;
       var $535=FUNCTION_TABLE[$531]($532, $533, $534);
       __label__ = 84; break;
@@ -11963,7 +11847,7 @@ function _sx86_exec_full_modregrm_ro($ctx, $w16, $d32, $mod, $reg, $rm, $opswap,
 _sx86_exec_full_modregrm_ro["X"]=1;
 
 function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 4; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -11980,7 +11864,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $lo;
       var $xx;
       var $rmv=__stackBase__;
-      var $rmv2=__stackBase__+4;
+      var $rmv2=__stackBase__+2;
       $1=$ctx;
       $2=$d32;
       $3=$mod;
@@ -11997,7 +11881,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
     case 3: 
       var $13=$1;
       var $14=(($13+236)|0);
-      var $15=HEAP8[($14)];
+      var $15=HEAP[$14];
       var $16=(($15 << 24) >> 24)!=0;
       if ($16) { __label__ = 12; break; } else { __label__ = 4; break; }
     case 4: 
@@ -12031,7 +11915,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $40=(($39+32)|0);
       var $41=(($40+16)|0);
       var $42=(($41)|0);
-      var $43=HEAP16[(($42)>>1)];
+      var $43=HEAP[$42];
       $seg=$43;
       __label__ = 11; break;
     case 10: 
@@ -12040,7 +11924,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $47=(($46+32)|0);
       var $48=(($47+24)|0);
       var $49=(($48)|0);
-      var $50=HEAP16[(($49)>>1)];
+      var $50=HEAP[$49];
       $seg=$50;
       __label__ = 11; break;
     case 11: 
@@ -12048,7 +11932,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
     case 12: 
       var $53=$1;
       var $54=(($53+238)|0);
-      var $55=HEAP16[(($54)>>1)];
+      var $55=HEAP[$54];
       $seg=$55;
       __label__ = 13; break;
     case 13: 
@@ -12088,7 +11972,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $84=(($83+12)|0);
       var $85=$84;
       var $86=(($85)|0);
-      var $87=HEAPU16[(($86)>>1)];
+      var $87=HEAP[$86];
       var $88=(($87)&65535);
       var $89=$1;
       var $90=(($89+4)|0);
@@ -12096,7 +11980,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $92=(($91+24)|0);
       var $93=$92;
       var $94=(($93)|0);
-      var $95=HEAPU16[(($94)>>1)];
+      var $95=HEAP[$94];
       var $96=(($95)&65535);
       var $97=(($88+$96)|0);
       var $98=(($97) & 65535);
@@ -12114,7 +11998,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $107=(($106+12)|0);
       var $108=$107;
       var $109=(($108)|0);
-      var $110=HEAPU16[(($109)>>1)];
+      var $110=HEAP[$109];
       var $111=(($110)&65535);
       var $112=$1;
       var $113=(($112+4)|0);
@@ -12122,7 +12006,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $115=(($114+28)|0);
       var $116=$115;
       var $117=(($116)|0);
-      var $118=HEAPU16[(($117)>>1)];
+      var $118=HEAP[$117];
       var $119=(($118)&65535);
       var $120=(($111+$119)|0);
       var $121=(($120) & 65535);
@@ -12140,7 +12024,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $130=(($129+20)|0);
       var $131=$130;
       var $132=(($131)|0);
-      var $133=HEAPU16[(($132)>>1)];
+      var $133=HEAP[$132];
       var $134=(($133)&65535);
       var $135=$1;
       var $136=(($135+4)|0);
@@ -12148,7 +12032,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $138=(($137+24)|0);
       var $139=$138;
       var $140=(($139)|0);
-      var $141=HEAPU16[(($140)>>1)];
+      var $141=HEAP[$140];
       var $142=(($141)&65535);
       var $143=(($134+$142)|0);
       var $144=(($143) & 65535);
@@ -12166,7 +12050,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $153=(($152+20)|0);
       var $154=$153;
       var $155=(($154)|0);
-      var $156=HEAPU16[(($155)>>1)];
+      var $156=HEAP[$155];
       var $157=(($156)&65535);
       var $158=$1;
       var $159=(($158+4)|0);
@@ -12174,7 +12058,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $161=(($160+28)|0);
       var $162=$161;
       var $163=(($162)|0);
-      var $164=HEAPU16[(($163)>>1)];
+      var $164=HEAP[$163];
       var $165=(($164)&65535);
       var $166=(($157+$165)|0);
       var $167=(($166) & 65535);
@@ -12192,7 +12076,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $176=(($175+24)|0);
       var $177=$176;
       var $178=(($177)|0);
-      var $179=HEAP16[(($178)>>1)];
+      var $179=HEAP[$178];
       $ofs=$179;
       __label__ = 32; break;
     case 26: 
@@ -12207,7 +12091,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $188=(($187+28)|0);
       var $189=$188;
       var $190=(($189)|0);
-      var $191=HEAP16[(($190)>>1)];
+      var $191=HEAP[$190];
       $ofs=$191;
       __label__ = 31; break;
     case 28: 
@@ -12222,7 +12106,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $200=(($199+12)|0);
       var $201=$200;
       var $202=(($201)|0);
-      var $203=HEAP16[(($202)>>1)];
+      var $203=HEAP[$202];
       $ofs=$203;
       __label__ = 30; break;
     case 30: 
@@ -12253,7 +12137,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $220=(($219+12)|0);
       var $221=$220;
       var $222=(($221)|0);
-      var $223=HEAPU16[(($222)>>1)];
+      var $223=HEAP[$222];
       var $224=(($223)&65535);
       var $225=$1;
       var $226=(($225+4)|0);
@@ -12261,7 +12145,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $228=(($227+24)|0);
       var $229=$228;
       var $230=(($229)|0);
-      var $231=HEAPU16[(($230)>>1)];
+      var $231=HEAP[$230];
       var $232=(($231)&65535);
       var $233=(($224+$232)|0);
       var $234=(($233) & 65535);
@@ -12279,7 +12163,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $243=(($242+12)|0);
       var $244=$243;
       var $245=(($244)|0);
-      var $246=HEAPU16[(($245)>>1)];
+      var $246=HEAP[$245];
       var $247=(($246)&65535);
       var $248=$1;
       var $249=(($248+4)|0);
@@ -12287,7 +12171,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $251=(($250+28)|0);
       var $252=$251;
       var $253=(($252)|0);
-      var $254=HEAPU16[(($253)>>1)];
+      var $254=HEAP[$253];
       var $255=(($254)&65535);
       var $256=(($247+$255)|0);
       var $257=(($256) & 65535);
@@ -12305,7 +12189,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $266=(($265+20)|0);
       var $267=$266;
       var $268=(($267)|0);
-      var $269=HEAPU16[(($268)>>1)];
+      var $269=HEAP[$268];
       var $270=(($269)&65535);
       var $271=$1;
       var $272=(($271+4)|0);
@@ -12313,7 +12197,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $274=(($273+24)|0);
       var $275=$274;
       var $276=(($275)|0);
-      var $277=HEAPU16[(($276)>>1)];
+      var $277=HEAP[$276];
       var $278=(($277)&65535);
       var $279=(($270+$278)|0);
       var $280=(($279) & 65535);
@@ -12331,7 +12215,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $289=(($288+20)|0);
       var $290=$289;
       var $291=(($290)|0);
-      var $292=HEAPU16[(($291)>>1)];
+      var $292=HEAP[$291];
       var $293=(($292)&65535);
       var $294=$1;
       var $295=(($294+4)|0);
@@ -12339,7 +12223,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $297=(($296+28)|0);
       var $298=$297;
       var $299=(($298)|0);
-      var $300=HEAPU16[(($299)>>1)];
+      var $300=HEAP[$299];
       var $301=(($300)&65535);
       var $302=(($293+$301)|0);
       var $303=(($302) & 65535);
@@ -12357,7 +12241,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $312=(($311+24)|0);
       var $313=$312;
       var $314=(($313)|0);
-      var $315=HEAP16[(($314)>>1)];
+      var $315=HEAP[$314];
       $ofs=$315;
       __label__ = 57; break;
     case 48: 
@@ -12372,7 +12256,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $324=(($323+28)|0);
       var $325=$324;
       var $326=(($325)|0);
-      var $327=HEAP16[(($326)>>1)];
+      var $327=HEAP[$326];
       $ofs=$327;
       __label__ = 56; break;
     case 50: 
@@ -12387,7 +12271,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $336=(($335+20)|0);
       var $337=$336;
       var $338=(($337)|0);
-      var $339=HEAP16[(($338)>>1)];
+      var $339=HEAP[$338];
       $ofs=$339;
       __label__ = 55; break;
     case 52: 
@@ -12402,7 +12286,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $348=(($347+12)|0);
       var $349=$348;
       var $350=(($349)|0);
-      var $351=HEAP16[(($350)>>1)];
+      var $351=HEAP[$350];
       $ofs=$351;
       __label__ = 54; break;
     case 54: 
@@ -12489,8 +12373,8 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $413=_softx86_fetch($410, 0, $411, $412, 2);
       var $414=$6;
       var $415=$1;
-      var $416=HEAP16[(($rmv2)>>1)];
-      var $417=HEAP16[(($rmv)>>1)];
+      var $416=HEAP[$rmv2];
+      var $417=HEAP[$rmv];
       var $418=FUNCTION_TABLE[$414]($415, $416, $417);
       var $419=$4;
       var $420=(($419)&255);
@@ -12500,7 +12384,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
       var $424=(($423+($420<<2))|0);
       var $425=$424;
       var $426=(($425)|0);
-      HEAP16[(($426)>>1)]=$418;
+      HEAP[$426]=$418;
       __label__ = 68; break;
     case 68: 
       STACKTOP = __stackBase__;
@@ -12511,7 +12395,7 @@ function _sx86_exec_full_modregrm_far($ctx, $d32, $mod, $reg, $rm, $op16, $op32)
 _sx86_exec_full_modregrm_far["X"]=1;
 
 function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $op32) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 4; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -12528,7 +12412,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $lo;
       var $xx;
       var $rmv=__stackBase__;
-      var $rmv2=__stackBase__+4;
+      var $rmv2=__stackBase__+2;
       $1=$ctx;
       $2=$d32;
       $3=$mod;
@@ -12545,7 +12429,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
     case 3: 
       var $13=$1;
       var $14=(($13+236)|0);
-      var $15=HEAP8[($14)];
+      var $15=HEAP[$14];
       var $16=(($15 << 24) >> 24)!=0;
       if ($16) { __label__ = 12; break; } else { __label__ = 4; break; }
     case 4: 
@@ -12579,7 +12463,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $40=(($39+32)|0);
       var $41=(($40+16)|0);
       var $42=(($41)|0);
-      var $43=HEAP16[(($42)>>1)];
+      var $43=HEAP[$42];
       $seg=$43;
       __label__ = 11; break;
     case 10: 
@@ -12588,7 +12472,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $47=(($46+32)|0);
       var $48=(($47+24)|0);
       var $49=(($48)|0);
-      var $50=HEAP16[(($49)>>1)];
+      var $50=HEAP[$49];
       $seg=$50;
       __label__ = 11; break;
     case 11: 
@@ -12596,7 +12480,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
     case 12: 
       var $53=$1;
       var $54=(($53+238)|0);
-      var $55=HEAP16[(($54)>>1)];
+      var $55=HEAP[$54];
       $seg=$55;
       __label__ = 13; break;
     case 13: 
@@ -12636,7 +12520,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $84=(($83+12)|0);
       var $85=$84;
       var $86=(($85)|0);
-      var $87=HEAPU16[(($86)>>1)];
+      var $87=HEAP[$86];
       var $88=(($87)&65535);
       var $89=$1;
       var $90=(($89+4)|0);
@@ -12644,7 +12528,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $92=(($91+24)|0);
       var $93=$92;
       var $94=(($93)|0);
-      var $95=HEAPU16[(($94)>>1)];
+      var $95=HEAP[$94];
       var $96=(($95)&65535);
       var $97=(($88+$96)|0);
       var $98=(($97) & 65535);
@@ -12662,7 +12546,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $107=(($106+12)|0);
       var $108=$107;
       var $109=(($108)|0);
-      var $110=HEAPU16[(($109)>>1)];
+      var $110=HEAP[$109];
       var $111=(($110)&65535);
       var $112=$1;
       var $113=(($112+4)|0);
@@ -12670,7 +12554,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $115=(($114+28)|0);
       var $116=$115;
       var $117=(($116)|0);
-      var $118=HEAPU16[(($117)>>1)];
+      var $118=HEAP[$117];
       var $119=(($118)&65535);
       var $120=(($111+$119)|0);
       var $121=(($120) & 65535);
@@ -12688,7 +12572,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $130=(($129+20)|0);
       var $131=$130;
       var $132=(($131)|0);
-      var $133=HEAPU16[(($132)>>1)];
+      var $133=HEAP[$132];
       var $134=(($133)&65535);
       var $135=$1;
       var $136=(($135+4)|0);
@@ -12696,7 +12580,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $138=(($137+24)|0);
       var $139=$138;
       var $140=(($139)|0);
-      var $141=HEAPU16[(($140)>>1)];
+      var $141=HEAP[$140];
       var $142=(($141)&65535);
       var $143=(($134+$142)|0);
       var $144=(($143) & 65535);
@@ -12714,7 +12598,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $153=(($152+20)|0);
       var $154=$153;
       var $155=(($154)|0);
-      var $156=HEAPU16[(($155)>>1)];
+      var $156=HEAP[$155];
       var $157=(($156)&65535);
       var $158=$1;
       var $159=(($158+4)|0);
@@ -12722,7 +12606,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $161=(($160+28)|0);
       var $162=$161;
       var $163=(($162)|0);
-      var $164=HEAPU16[(($163)>>1)];
+      var $164=HEAP[$163];
       var $165=(($164)&65535);
       var $166=(($157+$165)|0);
       var $167=(($166) & 65535);
@@ -12740,7 +12624,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $176=(($175+24)|0);
       var $177=$176;
       var $178=(($177)|0);
-      var $179=HEAP16[(($178)>>1)];
+      var $179=HEAP[$178];
       $ofs=$179;
       __label__ = 32; break;
     case 26: 
@@ -12755,7 +12639,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $188=(($187+28)|0);
       var $189=$188;
       var $190=(($189)|0);
-      var $191=HEAP16[(($190)>>1)];
+      var $191=HEAP[$190];
       $ofs=$191;
       __label__ = 31; break;
     case 28: 
@@ -12770,7 +12654,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $200=(($199+12)|0);
       var $201=$200;
       var $202=(($201)|0);
-      var $203=HEAP16[(($202)>>1)];
+      var $203=HEAP[$202];
       $ofs=$203;
       __label__ = 30; break;
     case 30: 
@@ -12801,7 +12685,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $220=(($219+12)|0);
       var $221=$220;
       var $222=(($221)|0);
-      var $223=HEAPU16[(($222)>>1)];
+      var $223=HEAP[$222];
       var $224=(($223)&65535);
       var $225=$1;
       var $226=(($225+4)|0);
@@ -12809,7 +12693,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $228=(($227+24)|0);
       var $229=$228;
       var $230=(($229)|0);
-      var $231=HEAPU16[(($230)>>1)];
+      var $231=HEAP[$230];
       var $232=(($231)&65535);
       var $233=(($224+$232)|0);
       var $234=(($233) & 65535);
@@ -12827,7 +12711,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $243=(($242+12)|0);
       var $244=$243;
       var $245=(($244)|0);
-      var $246=HEAPU16[(($245)>>1)];
+      var $246=HEAP[$245];
       var $247=(($246)&65535);
       var $248=$1;
       var $249=(($248+4)|0);
@@ -12835,7 +12719,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $251=(($250+28)|0);
       var $252=$251;
       var $253=(($252)|0);
-      var $254=HEAPU16[(($253)>>1)];
+      var $254=HEAP[$253];
       var $255=(($254)&65535);
       var $256=(($247+$255)|0);
       var $257=(($256) & 65535);
@@ -12853,7 +12737,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $266=(($265+20)|0);
       var $267=$266;
       var $268=(($267)|0);
-      var $269=HEAPU16[(($268)>>1)];
+      var $269=HEAP[$268];
       var $270=(($269)&65535);
       var $271=$1;
       var $272=(($271+4)|0);
@@ -12861,7 +12745,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $274=(($273+24)|0);
       var $275=$274;
       var $276=(($275)|0);
-      var $277=HEAPU16[(($276)>>1)];
+      var $277=HEAP[$276];
       var $278=(($277)&65535);
       var $279=(($270+$278)|0);
       var $280=(($279) & 65535);
@@ -12879,7 +12763,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $289=(($288+20)|0);
       var $290=$289;
       var $291=(($290)|0);
-      var $292=HEAPU16[(($291)>>1)];
+      var $292=HEAP[$291];
       var $293=(($292)&65535);
       var $294=$1;
       var $295=(($294+4)|0);
@@ -12887,7 +12771,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $297=(($296+28)|0);
       var $298=$297;
       var $299=(($298)|0);
-      var $300=HEAPU16[(($299)>>1)];
+      var $300=HEAP[$299];
       var $301=(($300)&65535);
       var $302=(($293+$301)|0);
       var $303=(($302) & 65535);
@@ -12905,7 +12789,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $312=(($311+24)|0);
       var $313=$312;
       var $314=(($313)|0);
-      var $315=HEAP16[(($314)>>1)];
+      var $315=HEAP[$314];
       $ofs=$315;
       __label__ = 57; break;
     case 48: 
@@ -12920,7 +12804,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $324=(($323+28)|0);
       var $325=$324;
       var $326=(($325)|0);
-      var $327=HEAP16[(($326)>>1)];
+      var $327=HEAP[$326];
       $ofs=$327;
       __label__ = 56; break;
     case 50: 
@@ -12935,7 +12819,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $336=(($335+20)|0);
       var $337=$336;
       var $338=(($337)|0);
-      var $339=HEAP16[(($338)>>1)];
+      var $339=HEAP[$338];
       $ofs=$339;
       __label__ = 55; break;
     case 52: 
@@ -12950,7 +12834,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $348=(($347+12)|0);
       var $349=$348;
       var $350=(($349)|0);
-      var $351=HEAP16[(($350)>>1)];
+      var $351=HEAP[$350];
       $ofs=$351;
       __label__ = 54; break;
     case 54: 
@@ -13045,9 +12929,9 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
       var $421=(($420+($417<<2))|0);
       var $422=$421;
       var $423=(($422)|0);
-      var $424=HEAP16[(($423)>>1)];
-      var $425=HEAP16[(($rmv2)>>1)];
-      var $426=HEAP16[(($rmv)>>1)];
+      var $424=HEAP[$423];
+      var $425=HEAP[$rmv2];
+      var $426=HEAP[$rmv];
       var $427=FUNCTION_TABLE[$414]($415, $424, $425, $426);
       __label__ = 68; break;
     case 68: 
@@ -13059,7 +12943,7 @@ function _sx86_exec_full_modregrm_far_ro3($ctx, $d32, $mod, $reg, $rm, $op16, $o
 _sx86_exec_full_modregrm_far_ro3["X"]=1;
 
 function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op16, $op32) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 3; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -13080,7 +12964,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $lo;
       var $xx;
       var $rmv2=__stackBase__;
-      var $rmv3=__stackBase__+4;
+      var $rmv3=__stackBase__+2;
       $1=$ctx;
       $2=$w16;
       $3=$d32;
@@ -13125,7 +13009,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $36=(($35+($32<<2))|0);
       var $37=$36;
       var $38=(($37)|0);
-      var $39=HEAP16[(($38)>>1)];
+      var $39=HEAP[$38];
       $rmv=$39;
       var $40=$7;
       var $41=$1;
@@ -13140,7 +13024,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $50=(($49+($46<<2))|0);
       var $51=$50;
       var $52=(($51)|0);
-      HEAP16[(($52)>>1)]=$44;
+      HEAP[$52]=$44;
       __label__ = 7; break;
     case 6: 
       var $54=$5;
@@ -13148,8 +13032,8 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $56=$1;
       var $57=(($56+204)|0);
       var $58=(($57+($55<<2))|0);
-      var $59=HEAP32[(($58)>>2)];
-      var $60=HEAP8[($59)];
+      var $59=HEAP[$58];
+      var $60=HEAP[$59];
       $rmv1=$60;
       var $61=$6;
       var $62=$1;
@@ -13162,15 +13046,15 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $69=$1;
       var $70=(($69+204)|0);
       var $71=(($70+($68<<2))|0);
-      var $72=HEAP32[(($71)>>2)];
-      HEAP8[($72)]=$66;
+      var $72=HEAP[$71];
+      HEAP[$72]=$66;
       __label__ = 7; break;
     case 7: 
       __label__ = 78; break;
     case 8: 
       var $75=$1;
       var $76=(($75+236)|0);
-      var $77=HEAP8[($76)];
+      var $77=HEAP[$76];
       var $78=(($77 << 24) >> 24)!=0;
       if ($78) { __label__ = 17; break; } else { __label__ = 9; break; }
     case 9: 
@@ -13204,7 +13088,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $102=(($101+32)|0);
       var $103=(($102+16)|0);
       var $104=(($103)|0);
-      var $105=HEAP16[(($104)>>1)];
+      var $105=HEAP[$104];
       $seg=$105;
       __label__ = 16; break;
     case 15: 
@@ -13213,7 +13097,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $109=(($108+32)|0);
       var $110=(($109+24)|0);
       var $111=(($110)|0);
-      var $112=HEAP16[(($111)>>1)];
+      var $112=HEAP[$111];
       $seg=$112;
       __label__ = 16; break;
     case 16: 
@@ -13221,7 +13105,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
     case 17: 
       var $115=$1;
       var $116=(($115+238)|0);
-      var $117=HEAP16[(($116)>>1)];
+      var $117=HEAP[$116];
       $seg=$117;
       __label__ = 18; break;
     case 18: 
@@ -13261,7 +13145,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $146=(($145+12)|0);
       var $147=$146;
       var $148=(($147)|0);
-      var $149=HEAPU16[(($148)>>1)];
+      var $149=HEAP[$148];
       var $150=(($149)&65535);
       var $151=$1;
       var $152=(($151+4)|0);
@@ -13269,7 +13153,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $154=(($153+24)|0);
       var $155=$154;
       var $156=(($155)|0);
-      var $157=HEAPU16[(($156)>>1)];
+      var $157=HEAP[$156];
       var $158=(($157)&65535);
       var $159=(($150+$158)|0);
       var $160=(($159) & 65535);
@@ -13287,7 +13171,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $169=(($168+12)|0);
       var $170=$169;
       var $171=(($170)|0);
-      var $172=HEAPU16[(($171)>>1)];
+      var $172=HEAP[$171];
       var $173=(($172)&65535);
       var $174=$1;
       var $175=(($174+4)|0);
@@ -13295,7 +13179,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $177=(($176+28)|0);
       var $178=$177;
       var $179=(($178)|0);
-      var $180=HEAPU16[(($179)>>1)];
+      var $180=HEAP[$179];
       var $181=(($180)&65535);
       var $182=(($173+$181)|0);
       var $183=(($182) & 65535);
@@ -13313,7 +13197,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $192=(($191+20)|0);
       var $193=$192;
       var $194=(($193)|0);
-      var $195=HEAPU16[(($194)>>1)];
+      var $195=HEAP[$194];
       var $196=(($195)&65535);
       var $197=$1;
       var $198=(($197+4)|0);
@@ -13321,7 +13205,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $200=(($199+24)|0);
       var $201=$200;
       var $202=(($201)|0);
-      var $203=HEAPU16[(($202)>>1)];
+      var $203=HEAP[$202];
       var $204=(($203)&65535);
       var $205=(($196+$204)|0);
       var $206=(($205) & 65535);
@@ -13339,7 +13223,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $215=(($214+20)|0);
       var $216=$215;
       var $217=(($216)|0);
-      var $218=HEAPU16[(($217)>>1)];
+      var $218=HEAP[$217];
       var $219=(($218)&65535);
       var $220=$1;
       var $221=(($220+4)|0);
@@ -13347,7 +13231,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $223=(($222+28)|0);
       var $224=$223;
       var $225=(($224)|0);
-      var $226=HEAPU16[(($225)>>1)];
+      var $226=HEAP[$225];
       var $227=(($226)&65535);
       var $228=(($219+$227)|0);
       var $229=(($228) & 65535);
@@ -13365,7 +13249,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $238=(($237+24)|0);
       var $239=$238;
       var $240=(($239)|0);
-      var $241=HEAP16[(($240)>>1)];
+      var $241=HEAP[$240];
       $ofs=$241;
       __label__ = 37; break;
     case 31: 
@@ -13380,7 +13264,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $250=(($249+28)|0);
       var $251=$250;
       var $252=(($251)|0);
-      var $253=HEAP16[(($252)>>1)];
+      var $253=HEAP[$252];
       $ofs=$253;
       __label__ = 36; break;
     case 33: 
@@ -13395,7 +13279,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $262=(($261+12)|0);
       var $263=$262;
       var $264=(($263)|0);
-      var $265=HEAP16[(($264)>>1)];
+      var $265=HEAP[$264];
       $ofs=$265;
       __label__ = 35; break;
     case 35: 
@@ -13426,7 +13310,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $282=(($281+12)|0);
       var $283=$282;
       var $284=(($283)|0);
-      var $285=HEAPU16[(($284)>>1)];
+      var $285=HEAP[$284];
       var $286=(($285)&65535);
       var $287=$1;
       var $288=(($287+4)|0);
@@ -13434,7 +13318,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $290=(($289+24)|0);
       var $291=$290;
       var $292=(($291)|0);
-      var $293=HEAPU16[(($292)>>1)];
+      var $293=HEAP[$292];
       var $294=(($293)&65535);
       var $295=(($286+$294)|0);
       var $296=(($295) & 65535);
@@ -13452,7 +13336,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $305=(($304+12)|0);
       var $306=$305;
       var $307=(($306)|0);
-      var $308=HEAPU16[(($307)>>1)];
+      var $308=HEAP[$307];
       var $309=(($308)&65535);
       var $310=$1;
       var $311=(($310+4)|0);
@@ -13460,7 +13344,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $313=(($312+28)|0);
       var $314=$313;
       var $315=(($314)|0);
-      var $316=HEAPU16[(($315)>>1)];
+      var $316=HEAP[$315];
       var $317=(($316)&65535);
       var $318=(($309+$317)|0);
       var $319=(($318) & 65535);
@@ -13478,7 +13362,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $328=(($327+20)|0);
       var $329=$328;
       var $330=(($329)|0);
-      var $331=HEAPU16[(($330)>>1)];
+      var $331=HEAP[$330];
       var $332=(($331)&65535);
       var $333=$1;
       var $334=(($333+4)|0);
@@ -13486,7 +13370,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $336=(($335+24)|0);
       var $337=$336;
       var $338=(($337)|0);
-      var $339=HEAPU16[(($338)>>1)];
+      var $339=HEAP[$338];
       var $340=(($339)&65535);
       var $341=(($332+$340)|0);
       var $342=(($341) & 65535);
@@ -13504,7 +13388,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $351=(($350+20)|0);
       var $352=$351;
       var $353=(($352)|0);
-      var $354=HEAPU16[(($353)>>1)];
+      var $354=HEAP[$353];
       var $355=(($354)&65535);
       var $356=$1;
       var $357=(($356+4)|0);
@@ -13512,7 +13396,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $359=(($358+28)|0);
       var $360=$359;
       var $361=(($360)|0);
-      var $362=HEAPU16[(($361)>>1)];
+      var $362=HEAP[$361];
       var $363=(($362)&65535);
       var $364=(($355+$363)|0);
       var $365=(($364) & 65535);
@@ -13530,7 +13414,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $374=(($373+24)|0);
       var $375=$374;
       var $376=(($375)|0);
-      var $377=HEAP16[(($376)>>1)];
+      var $377=HEAP[$376];
       $ofs=$377;
       __label__ = 62; break;
     case 53: 
@@ -13545,7 +13429,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $386=(($385+28)|0);
       var $387=$386;
       var $388=(($387)|0);
-      var $389=HEAP16[(($388)>>1)];
+      var $389=HEAP[$388];
       $ofs=$389;
       __label__ = 61; break;
     case 55: 
@@ -13560,7 +13444,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $398=(($397+20)|0);
       var $399=$398;
       var $400=(($399)|0);
-      var $401=HEAP16[(($400)>>1)];
+      var $401=HEAP[$400];
       $ofs=$401;
       __label__ = 60; break;
     case 57: 
@@ -13575,7 +13459,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $410=(($409+12)|0);
       var $411=$410;
       var $412=(($411)|0);
-      var $413=HEAP16[(($412)>>1)];
+      var $413=HEAP[$412];
       $ofs=$413;
       __label__ = 59; break;
     case 59: 
@@ -13678,10 +13562,10 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $487=_softx86_fetch($484, 0, $485, $486, 2);
       var $488=$7;
       var $489=$1;
-      var $490=HEAP16[(($rmv2)>>1)];
+      var $490=HEAP[$rmv2];
       var $491=$imm;
       var $492=FUNCTION_TABLE[$488]($489, $490, $491);
-      HEAP16[(($rmv2)>>1)]=$492;
+      HEAP[$rmv2]=$492;
       var $493=$1;
       var $494=$lo;
       var $495=$rmv2;
@@ -13700,11 +13584,11 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $506=_softx86_fetch($504, 0, $505, $rmv3, 1);
       var $507=$6;
       var $508=$1;
-      var $509=HEAP8[($rmv3)];
+      var $509=HEAP[$rmv3];
       var $510=$imm;
       var $511=(($510) & 255);
       var $512=FUNCTION_TABLE[$507]($508, $509, $511);
-      HEAP8[($rmv3)]=$512;
+      HEAP[$rmv3]=$512;
       var $513=$1;
       var $514=$lo;
       var $515=_softx86_write($513, 0, $514, $rmv3, 1);
@@ -13720,7 +13604,7 @@ function _sx86_exec_full_modrmonly_rw_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
 _sx86_exec_full_modrmonly_rw_imm["X"]=1;
 
 function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $op16, $op32) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 3; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -13741,7 +13625,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $lo;
       var $xx;
       var $rmv2=__stackBase__;
-      var $rmv3=__stackBase__+4;
+      var $rmv3=__stackBase__+2;
       $1=$ctx;
       $2=$w16;
       $3=$d32;
@@ -13771,7 +13655,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $24=(($23+($20<<2))|0);
       var $25=$24;
       var $26=(($25)|0);
-      var $27=HEAP16[(($26)>>1)];
+      var $27=HEAP[$26];
       $rmv=$27;
       var $28=$7;
       var $29=$1;
@@ -13786,7 +13670,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $38=(($37+($34<<2))|0);
       var $39=$38;
       var $40=(($39)|0);
-      HEAP16[(($40)>>1)]=$32;
+      HEAP[$40]=$32;
       __label__ = 5; break;
     case 4: 
       var $42=$5;
@@ -13794,8 +13678,8 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $44=$1;
       var $45=(($44+204)|0);
       var $46=(($45+($43<<2))|0);
-      var $47=HEAP32[(($46)>>2)];
-      var $48=HEAP8[($47)];
+      var $47=HEAP[$46];
+      var $48=HEAP[$47];
       $rmv1=$48;
       var $49=$6;
       var $50=$1;
@@ -13808,15 +13692,15 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $57=$1;
       var $58=(($57+204)|0);
       var $59=(($58+($56<<2))|0);
-      var $60=HEAP32[(($59)>>2)];
-      HEAP8[($60)]=$54;
+      var $60=HEAP[$59];
+      HEAP[$60]=$54;
       __label__ = 5; break;
     case 5: 
       __label__ = 76; break;
     case 6: 
       var $63=$1;
       var $64=(($63+236)|0);
-      var $65=HEAP8[($64)];
+      var $65=HEAP[$64];
       var $66=(($65 << 24) >> 24)!=0;
       if ($66) { __label__ = 15; break; } else { __label__ = 7; break; }
     case 7: 
@@ -13850,7 +13734,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $90=(($89+32)|0);
       var $91=(($90+16)|0);
       var $92=(($91)|0);
-      var $93=HEAP16[(($92)>>1)];
+      var $93=HEAP[$92];
       $seg=$93;
       __label__ = 14; break;
     case 13: 
@@ -13859,7 +13743,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $97=(($96+32)|0);
       var $98=(($97+24)|0);
       var $99=(($98)|0);
-      var $100=HEAP16[(($99)>>1)];
+      var $100=HEAP[$99];
       $seg=$100;
       __label__ = 14; break;
     case 14: 
@@ -13867,7 +13751,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
     case 15: 
       var $103=$1;
       var $104=(($103+238)|0);
-      var $105=HEAP16[(($104)>>1)];
+      var $105=HEAP[$104];
       $seg=$105;
       __label__ = 16; break;
     case 16: 
@@ -13907,7 +13791,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $134=(($133+12)|0);
       var $135=$134;
       var $136=(($135)|0);
-      var $137=HEAPU16[(($136)>>1)];
+      var $137=HEAP[$136];
       var $138=(($137)&65535);
       var $139=$1;
       var $140=(($139+4)|0);
@@ -13915,7 +13799,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $142=(($141+24)|0);
       var $143=$142;
       var $144=(($143)|0);
-      var $145=HEAPU16[(($144)>>1)];
+      var $145=HEAP[$144];
       var $146=(($145)&65535);
       var $147=(($138+$146)|0);
       var $148=(($147) & 65535);
@@ -13933,7 +13817,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $157=(($156+12)|0);
       var $158=$157;
       var $159=(($158)|0);
-      var $160=HEAPU16[(($159)>>1)];
+      var $160=HEAP[$159];
       var $161=(($160)&65535);
       var $162=$1;
       var $163=(($162+4)|0);
@@ -13941,7 +13825,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $165=(($164+28)|0);
       var $166=$165;
       var $167=(($166)|0);
-      var $168=HEAPU16[(($167)>>1)];
+      var $168=HEAP[$167];
       var $169=(($168)&65535);
       var $170=(($161+$169)|0);
       var $171=(($170) & 65535);
@@ -13959,7 +13843,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $180=(($179+20)|0);
       var $181=$180;
       var $182=(($181)|0);
-      var $183=HEAPU16[(($182)>>1)];
+      var $183=HEAP[$182];
       var $184=(($183)&65535);
       var $185=$1;
       var $186=(($185+4)|0);
@@ -13967,7 +13851,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $188=(($187+24)|0);
       var $189=$188;
       var $190=(($189)|0);
-      var $191=HEAPU16[(($190)>>1)];
+      var $191=HEAP[$190];
       var $192=(($191)&65535);
       var $193=(($184+$192)|0);
       var $194=(($193) & 65535);
@@ -13985,7 +13869,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $203=(($202+20)|0);
       var $204=$203;
       var $205=(($204)|0);
-      var $206=HEAPU16[(($205)>>1)];
+      var $206=HEAP[$205];
       var $207=(($206)&65535);
       var $208=$1;
       var $209=(($208+4)|0);
@@ -13993,7 +13877,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $211=(($210+28)|0);
       var $212=$211;
       var $213=(($212)|0);
-      var $214=HEAPU16[(($213)>>1)];
+      var $214=HEAP[$213];
       var $215=(($214)&65535);
       var $216=(($207+$215)|0);
       var $217=(($216) & 65535);
@@ -14011,7 +13895,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $226=(($225+24)|0);
       var $227=$226;
       var $228=(($227)|0);
-      var $229=HEAP16[(($228)>>1)];
+      var $229=HEAP[$228];
       $ofs=$229;
       __label__ = 35; break;
     case 29: 
@@ -14026,7 +13910,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $238=(($237+28)|0);
       var $239=$238;
       var $240=(($239)|0);
-      var $241=HEAP16[(($240)>>1)];
+      var $241=HEAP[$240];
       $ofs=$241;
       __label__ = 34; break;
     case 31: 
@@ -14041,7 +13925,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $250=(($249+12)|0);
       var $251=$250;
       var $252=(($251)|0);
-      var $253=HEAP16[(($252)>>1)];
+      var $253=HEAP[$252];
       $ofs=$253;
       __label__ = 33; break;
     case 33: 
@@ -14072,7 +13956,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $270=(($269+12)|0);
       var $271=$270;
       var $272=(($271)|0);
-      var $273=HEAPU16[(($272)>>1)];
+      var $273=HEAP[$272];
       var $274=(($273)&65535);
       var $275=$1;
       var $276=(($275+4)|0);
@@ -14080,7 +13964,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $278=(($277+24)|0);
       var $279=$278;
       var $280=(($279)|0);
-      var $281=HEAPU16[(($280)>>1)];
+      var $281=HEAP[$280];
       var $282=(($281)&65535);
       var $283=(($274+$282)|0);
       var $284=(($283) & 65535);
@@ -14098,7 +13982,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $293=(($292+12)|0);
       var $294=$293;
       var $295=(($294)|0);
-      var $296=HEAPU16[(($295)>>1)];
+      var $296=HEAP[$295];
       var $297=(($296)&65535);
       var $298=$1;
       var $299=(($298+4)|0);
@@ -14106,7 +13990,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $301=(($300+28)|0);
       var $302=$301;
       var $303=(($302)|0);
-      var $304=HEAPU16[(($303)>>1)];
+      var $304=HEAP[$303];
       var $305=(($304)&65535);
       var $306=(($297+$305)|0);
       var $307=(($306) & 65535);
@@ -14124,7 +14008,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $316=(($315+20)|0);
       var $317=$316;
       var $318=(($317)|0);
-      var $319=HEAPU16[(($318)>>1)];
+      var $319=HEAP[$318];
       var $320=(($319)&65535);
       var $321=$1;
       var $322=(($321+4)|0);
@@ -14132,7 +14016,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $324=(($323+24)|0);
       var $325=$324;
       var $326=(($325)|0);
-      var $327=HEAPU16[(($326)>>1)];
+      var $327=HEAP[$326];
       var $328=(($327)&65535);
       var $329=(($320+$328)|0);
       var $330=(($329) & 65535);
@@ -14150,7 +14034,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $339=(($338+20)|0);
       var $340=$339;
       var $341=(($340)|0);
-      var $342=HEAPU16[(($341)>>1)];
+      var $342=HEAP[$341];
       var $343=(($342)&65535);
       var $344=$1;
       var $345=(($344+4)|0);
@@ -14158,7 +14042,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $347=(($346+28)|0);
       var $348=$347;
       var $349=(($348)|0);
-      var $350=HEAPU16[(($349)>>1)];
+      var $350=HEAP[$349];
       var $351=(($350)&65535);
       var $352=(($343+$351)|0);
       var $353=(($352) & 65535);
@@ -14176,7 +14060,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $362=(($361+24)|0);
       var $363=$362;
       var $364=(($363)|0);
-      var $365=HEAP16[(($364)>>1)];
+      var $365=HEAP[$364];
       $ofs=$365;
       __label__ = 60; break;
     case 51: 
@@ -14191,7 +14075,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $374=(($373+28)|0);
       var $375=$374;
       var $376=(($375)|0);
-      var $377=HEAP16[(($376)>>1)];
+      var $377=HEAP[$376];
       $ofs=$377;
       __label__ = 59; break;
     case 53: 
@@ -14206,7 +14090,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $386=(($385+20)|0);
       var $387=$386;
       var $388=(($387)|0);
-      var $389=HEAP16[(($388)>>1)];
+      var $389=HEAP[$388];
       $ofs=$389;
       __label__ = 58; break;
     case 55: 
@@ -14221,7 +14105,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $398=(($397+12)|0);
       var $399=$398;
       var $400=(($399)|0);
-      var $401=HEAP16[(($400)>>1)];
+      var $401=HEAP[$400];
       $ofs=$401;
       __label__ = 57; break;
     case 57: 
@@ -14324,10 +14208,10 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $475=_softx86_fetch($472, 0, $473, $474, 2);
       var $476=$7;
       var $477=$1;
-      var $478=HEAP16[(($rmv2)>>1)];
+      var $478=HEAP[$rmv2];
       var $479=$imm;
       var $480=FUNCTION_TABLE[$476]($477, $478, $479);
-      HEAP16[(($rmv2)>>1)]=$480;
+      HEAP[$rmv2]=$480;
       var $481=$1;
       var $482=$lo;
       var $483=$rmv2;
@@ -14346,11 +14230,11 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
       var $494=_softx86_fetch($492, 0, $493, $rmv3, 1);
       var $495=$6;
       var $496=$1;
-      var $497=HEAP8[($rmv3)];
+      var $497=HEAP[$rmv3];
       var $498=$imm;
       var $499=(($498) & 255);
       var $500=FUNCTION_TABLE[$495]($496, $497, $499);
-      HEAP8[($rmv3)]=$500;
+      HEAP[$rmv3]=$500;
       var $501=$1;
       var $502=$lo;
       var $503=_softx86_write($501, 0, $502, $rmv3, 1);
@@ -14366,7 +14250,7 @@ function _sx86_exec_full_modrmonly_rw_imm8($ctx, $w16, $d32, $mod, $rm, $op8, $o
 _sx86_exec_full_modrmonly_rw_imm8["X"]=1;
 
 function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op16, $op32) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 3; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -14387,7 +14271,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $lo;
       var $xx;
       var $rmv2=__stackBase__;
-      var $rmv3=__stackBase__+4;
+      var $rmv3=__stackBase__+2;
       $1=$ctx;
       $2=$w16;
       $3=$d32;
@@ -14432,7 +14316,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $36=(($35+($32<<2))|0);
       var $37=$36;
       var $38=(($37)|0);
-      var $39=HEAP16[(($38)>>1)];
+      var $39=HEAP[$38];
       $rmv=$39;
       var $40=$7;
       var $41=$1;
@@ -14446,8 +14330,8 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $48=$1;
       var $49=(($48+204)|0);
       var $50=(($49+($47<<2))|0);
-      var $51=HEAP32[(($50)>>2)];
-      var $52=HEAP8[($51)];
+      var $51=HEAP[$50];
+      var $52=HEAP[$51];
       $rmv1=$52;
       var $53=$6;
       var $54=$1;
@@ -14461,7 +14345,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
     case 8: 
       var $61=$1;
       var $62=(($61+236)|0);
-      var $63=HEAP8[($62)];
+      var $63=HEAP[$62];
       var $64=(($63 << 24) >> 24)!=0;
       if ($64) { __label__ = 17; break; } else { __label__ = 9; break; }
     case 9: 
@@ -14495,7 +14379,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $88=(($87+32)|0);
       var $89=(($88+16)|0);
       var $90=(($89)|0);
-      var $91=HEAP16[(($90)>>1)];
+      var $91=HEAP[$90];
       $seg=$91;
       __label__ = 16; break;
     case 15: 
@@ -14504,7 +14388,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $95=(($94+32)|0);
       var $96=(($95+24)|0);
       var $97=(($96)|0);
-      var $98=HEAP16[(($97)>>1)];
+      var $98=HEAP[$97];
       $seg=$98;
       __label__ = 16; break;
     case 16: 
@@ -14512,7 +14396,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
     case 17: 
       var $101=$1;
       var $102=(($101+238)|0);
-      var $103=HEAP16[(($102)>>1)];
+      var $103=HEAP[$102];
       $seg=$103;
       __label__ = 18; break;
     case 18: 
@@ -14552,7 +14436,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $132=(($131+12)|0);
       var $133=$132;
       var $134=(($133)|0);
-      var $135=HEAPU16[(($134)>>1)];
+      var $135=HEAP[$134];
       var $136=(($135)&65535);
       var $137=$1;
       var $138=(($137+4)|0);
@@ -14560,7 +14444,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $140=(($139+24)|0);
       var $141=$140;
       var $142=(($141)|0);
-      var $143=HEAPU16[(($142)>>1)];
+      var $143=HEAP[$142];
       var $144=(($143)&65535);
       var $145=(($136+$144)|0);
       var $146=(($145) & 65535);
@@ -14578,7 +14462,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $155=(($154+12)|0);
       var $156=$155;
       var $157=(($156)|0);
-      var $158=HEAPU16[(($157)>>1)];
+      var $158=HEAP[$157];
       var $159=(($158)&65535);
       var $160=$1;
       var $161=(($160+4)|0);
@@ -14586,7 +14470,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $163=(($162+28)|0);
       var $164=$163;
       var $165=(($164)|0);
-      var $166=HEAPU16[(($165)>>1)];
+      var $166=HEAP[$165];
       var $167=(($166)&65535);
       var $168=(($159+$167)|0);
       var $169=(($168) & 65535);
@@ -14604,7 +14488,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $178=(($177+20)|0);
       var $179=$178;
       var $180=(($179)|0);
-      var $181=HEAPU16[(($180)>>1)];
+      var $181=HEAP[$180];
       var $182=(($181)&65535);
       var $183=$1;
       var $184=(($183+4)|0);
@@ -14612,7 +14496,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $186=(($185+24)|0);
       var $187=$186;
       var $188=(($187)|0);
-      var $189=HEAPU16[(($188)>>1)];
+      var $189=HEAP[$188];
       var $190=(($189)&65535);
       var $191=(($182+$190)|0);
       var $192=(($191) & 65535);
@@ -14630,7 +14514,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $201=(($200+20)|0);
       var $202=$201;
       var $203=(($202)|0);
-      var $204=HEAPU16[(($203)>>1)];
+      var $204=HEAP[$203];
       var $205=(($204)&65535);
       var $206=$1;
       var $207=(($206+4)|0);
@@ -14638,7 +14522,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $209=(($208+28)|0);
       var $210=$209;
       var $211=(($210)|0);
-      var $212=HEAPU16[(($211)>>1)];
+      var $212=HEAP[$211];
       var $213=(($212)&65535);
       var $214=(($205+$213)|0);
       var $215=(($214) & 65535);
@@ -14656,7 +14540,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $224=(($223+24)|0);
       var $225=$224;
       var $226=(($225)|0);
-      var $227=HEAP16[(($226)>>1)];
+      var $227=HEAP[$226];
       $ofs=$227;
       __label__ = 37; break;
     case 31: 
@@ -14671,7 +14555,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $236=(($235+28)|0);
       var $237=$236;
       var $238=(($237)|0);
-      var $239=HEAP16[(($238)>>1)];
+      var $239=HEAP[$238];
       $ofs=$239;
       __label__ = 36; break;
     case 33: 
@@ -14686,7 +14570,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $248=(($247+12)|0);
       var $249=$248;
       var $250=(($249)|0);
-      var $251=HEAP16[(($250)>>1)];
+      var $251=HEAP[$250];
       $ofs=$251;
       __label__ = 35; break;
     case 35: 
@@ -14717,7 +14601,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $268=(($267+12)|0);
       var $269=$268;
       var $270=(($269)|0);
-      var $271=HEAPU16[(($270)>>1)];
+      var $271=HEAP[$270];
       var $272=(($271)&65535);
       var $273=$1;
       var $274=(($273+4)|0);
@@ -14725,7 +14609,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $276=(($275+24)|0);
       var $277=$276;
       var $278=(($277)|0);
-      var $279=HEAPU16[(($278)>>1)];
+      var $279=HEAP[$278];
       var $280=(($279)&65535);
       var $281=(($272+$280)|0);
       var $282=(($281) & 65535);
@@ -14743,7 +14627,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $291=(($290+12)|0);
       var $292=$291;
       var $293=(($292)|0);
-      var $294=HEAPU16[(($293)>>1)];
+      var $294=HEAP[$293];
       var $295=(($294)&65535);
       var $296=$1;
       var $297=(($296+4)|0);
@@ -14751,7 +14635,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $299=(($298+28)|0);
       var $300=$299;
       var $301=(($300)|0);
-      var $302=HEAPU16[(($301)>>1)];
+      var $302=HEAP[$301];
       var $303=(($302)&65535);
       var $304=(($295+$303)|0);
       var $305=(($304) & 65535);
@@ -14769,7 +14653,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $314=(($313+20)|0);
       var $315=$314;
       var $316=(($315)|0);
-      var $317=HEAPU16[(($316)>>1)];
+      var $317=HEAP[$316];
       var $318=(($317)&65535);
       var $319=$1;
       var $320=(($319+4)|0);
@@ -14777,7 +14661,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $322=(($321+24)|0);
       var $323=$322;
       var $324=(($323)|0);
-      var $325=HEAPU16[(($324)>>1)];
+      var $325=HEAP[$324];
       var $326=(($325)&65535);
       var $327=(($318+$326)|0);
       var $328=(($327) & 65535);
@@ -14795,7 +14679,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $337=(($336+20)|0);
       var $338=$337;
       var $339=(($338)|0);
-      var $340=HEAPU16[(($339)>>1)];
+      var $340=HEAP[$339];
       var $341=(($340)&65535);
       var $342=$1;
       var $343=(($342+4)|0);
@@ -14803,7 +14687,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $345=(($344+28)|0);
       var $346=$345;
       var $347=(($346)|0);
-      var $348=HEAPU16[(($347)>>1)];
+      var $348=HEAP[$347];
       var $349=(($348)&65535);
       var $350=(($341+$349)|0);
       var $351=(($350) & 65535);
@@ -14821,7 +14705,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $360=(($359+24)|0);
       var $361=$360;
       var $362=(($361)|0);
-      var $363=HEAP16[(($362)>>1)];
+      var $363=HEAP[$362];
       $ofs=$363;
       __label__ = 62; break;
     case 53: 
@@ -14836,7 +14720,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $372=(($371+28)|0);
       var $373=$372;
       var $374=(($373)|0);
-      var $375=HEAP16[(($374)>>1)];
+      var $375=HEAP[$374];
       $ofs=$375;
       __label__ = 61; break;
     case 55: 
@@ -14851,7 +14735,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $384=(($383+20)|0);
       var $385=$384;
       var $386=(($385)|0);
-      var $387=HEAP16[(($386)>>1)];
+      var $387=HEAP[$386];
       $ofs=$387;
       __label__ = 60; break;
     case 57: 
@@ -14866,7 +14750,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $396=(($395+12)|0);
       var $397=$396;
       var $398=(($397)|0);
-      var $399=HEAP16[(($398)>>1)];
+      var $399=HEAP[$398];
       $ofs=$399;
       __label__ = 59; break;
     case 59: 
@@ -14969,7 +14853,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $473=_softx86_fetch($470, 0, $471, $472, 2);
       var $474=$7;
       var $475=$1;
-      var $476=HEAP16[(($rmv2)>>1)];
+      var $476=HEAP[$rmv2];
       var $477=$imm;
       var $478=FUNCTION_TABLE[$474]($475, $476, $477);
       __label__ = 77; break;
@@ -14986,7 +14870,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
       var $488=_softx86_fetch($486, 0, $487, $rmv3, 1);
       var $489=$6;
       var $490=$1;
-      var $491=HEAP8[($rmv3)];
+      var $491=HEAP[$rmv3];
       var $492=$imm;
       var $493=(($492) & 255);
       var $494=FUNCTION_TABLE[$489]($490, $491, $493);
@@ -15002,7 +14886,7 @@ function _sx86_exec_full_modrmonly_ro_imm($ctx, $w16, $d32, $mod, $rm, $op8, $op
 _sx86_exec_full_modrmonly_ro_imm["X"]=1;
 
 function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, $op32) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 3; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -15022,7 +14906,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $lo;
       var $xx;
       var $rmv2=__stackBase__;
-      var $rmv3=__stackBase__+4;
+      var $rmv3=__stackBase__+2;
       $1=$ctx;
       $2=$w16;
       $3=$d32;
@@ -15048,7 +14932,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $21=(($20+($17<<2))|0);
       var $22=$21;
       var $23=(($22)|0);
-      var $24=HEAP16[(($23)>>1)];
+      var $24=HEAP[$23];
       $rmv=$24;
       var $25=$7;
       var $26=$1;
@@ -15062,7 +14946,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $34=(($33+($30<<2))|0);
       var $35=$34;
       var $36=(($35)|0);
-      HEAP16[(($36)>>1)]=$28;
+      HEAP[$36]=$28;
       __label__ = 5; break;
     case 4: 
       var $38=$5;
@@ -15070,8 +14954,8 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $40=$1;
       var $41=(($40+204)|0);
       var $42=(($41+($39<<2))|0);
-      var $43=HEAP32[(($42)>>2)];
-      var $44=HEAP8[($43)];
+      var $43=HEAP[$42];
+      var $44=HEAP[$43];
       $rmv1=$44;
       var $45=$6;
       var $46=$1;
@@ -15082,15 +14966,15 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $51=$1;
       var $52=(($51+204)|0);
       var $53=(($52+($50<<2))|0);
-      var $54=HEAP32[(($53)>>2)];
-      HEAP8[($54)]=$48;
+      var $54=HEAP[$53];
+      HEAP[$54]=$48;
       __label__ = 5; break;
     case 5: 
       __label__ = 74; break;
     case 6: 
       var $57=$1;
       var $58=(($57+236)|0);
-      var $59=HEAP8[($58)];
+      var $59=HEAP[$58];
       var $60=(($59 << 24) >> 24)!=0;
       if ($60) { __label__ = 15; break; } else { __label__ = 7; break; }
     case 7: 
@@ -15124,7 +15008,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $84=(($83+32)|0);
       var $85=(($84+16)|0);
       var $86=(($85)|0);
-      var $87=HEAP16[(($86)>>1)];
+      var $87=HEAP[$86];
       $seg=$87;
       __label__ = 14; break;
     case 13: 
@@ -15133,7 +15017,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $91=(($90+32)|0);
       var $92=(($91+24)|0);
       var $93=(($92)|0);
-      var $94=HEAP16[(($93)>>1)];
+      var $94=HEAP[$93];
       $seg=$94;
       __label__ = 14; break;
     case 14: 
@@ -15141,7 +15025,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
     case 15: 
       var $97=$1;
       var $98=(($97+238)|0);
-      var $99=HEAP16[(($98)>>1)];
+      var $99=HEAP[$98];
       $seg=$99;
       __label__ = 16; break;
     case 16: 
@@ -15181,7 +15065,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $128=(($127+12)|0);
       var $129=$128;
       var $130=(($129)|0);
-      var $131=HEAPU16[(($130)>>1)];
+      var $131=HEAP[$130];
       var $132=(($131)&65535);
       var $133=$1;
       var $134=(($133+4)|0);
@@ -15189,7 +15073,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $136=(($135+24)|0);
       var $137=$136;
       var $138=(($137)|0);
-      var $139=HEAPU16[(($138)>>1)];
+      var $139=HEAP[$138];
       var $140=(($139)&65535);
       var $141=(($132+$140)|0);
       var $142=(($141) & 65535);
@@ -15207,7 +15091,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $151=(($150+12)|0);
       var $152=$151;
       var $153=(($152)|0);
-      var $154=HEAPU16[(($153)>>1)];
+      var $154=HEAP[$153];
       var $155=(($154)&65535);
       var $156=$1;
       var $157=(($156+4)|0);
@@ -15215,7 +15099,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $159=(($158+28)|0);
       var $160=$159;
       var $161=(($160)|0);
-      var $162=HEAPU16[(($161)>>1)];
+      var $162=HEAP[$161];
       var $163=(($162)&65535);
       var $164=(($155+$163)|0);
       var $165=(($164) & 65535);
@@ -15233,7 +15117,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $174=(($173+20)|0);
       var $175=$174;
       var $176=(($175)|0);
-      var $177=HEAPU16[(($176)>>1)];
+      var $177=HEAP[$176];
       var $178=(($177)&65535);
       var $179=$1;
       var $180=(($179+4)|0);
@@ -15241,7 +15125,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $182=(($181+24)|0);
       var $183=$182;
       var $184=(($183)|0);
-      var $185=HEAPU16[(($184)>>1)];
+      var $185=HEAP[$184];
       var $186=(($185)&65535);
       var $187=(($178+$186)|0);
       var $188=(($187) & 65535);
@@ -15259,7 +15143,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $197=(($196+20)|0);
       var $198=$197;
       var $199=(($198)|0);
-      var $200=HEAPU16[(($199)>>1)];
+      var $200=HEAP[$199];
       var $201=(($200)&65535);
       var $202=$1;
       var $203=(($202+4)|0);
@@ -15267,7 +15151,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $205=(($204+28)|0);
       var $206=$205;
       var $207=(($206)|0);
-      var $208=HEAPU16[(($207)>>1)];
+      var $208=HEAP[$207];
       var $209=(($208)&65535);
       var $210=(($201+$209)|0);
       var $211=(($210) & 65535);
@@ -15285,7 +15169,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $220=(($219+24)|0);
       var $221=$220;
       var $222=(($221)|0);
-      var $223=HEAP16[(($222)>>1)];
+      var $223=HEAP[$222];
       $ofs=$223;
       __label__ = 35; break;
     case 29: 
@@ -15300,7 +15184,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $232=(($231+28)|0);
       var $233=$232;
       var $234=(($233)|0);
-      var $235=HEAP16[(($234)>>1)];
+      var $235=HEAP[$234];
       $ofs=$235;
       __label__ = 34; break;
     case 31: 
@@ -15315,7 +15199,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $244=(($243+12)|0);
       var $245=$244;
       var $246=(($245)|0);
-      var $247=HEAP16[(($246)>>1)];
+      var $247=HEAP[$246];
       $ofs=$247;
       __label__ = 33; break;
     case 33: 
@@ -15346,7 +15230,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $264=(($263+12)|0);
       var $265=$264;
       var $266=(($265)|0);
-      var $267=HEAPU16[(($266)>>1)];
+      var $267=HEAP[$266];
       var $268=(($267)&65535);
       var $269=$1;
       var $270=(($269+4)|0);
@@ -15354,7 +15238,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $272=(($271+24)|0);
       var $273=$272;
       var $274=(($273)|0);
-      var $275=HEAPU16[(($274)>>1)];
+      var $275=HEAP[$274];
       var $276=(($275)&65535);
       var $277=(($268+$276)|0);
       var $278=(($277) & 65535);
@@ -15372,7 +15256,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $287=(($286+12)|0);
       var $288=$287;
       var $289=(($288)|0);
-      var $290=HEAPU16[(($289)>>1)];
+      var $290=HEAP[$289];
       var $291=(($290)&65535);
       var $292=$1;
       var $293=(($292+4)|0);
@@ -15380,7 +15264,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $295=(($294+28)|0);
       var $296=$295;
       var $297=(($296)|0);
-      var $298=HEAPU16[(($297)>>1)];
+      var $298=HEAP[$297];
       var $299=(($298)&65535);
       var $300=(($291+$299)|0);
       var $301=(($300) & 65535);
@@ -15398,7 +15282,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $310=(($309+20)|0);
       var $311=$310;
       var $312=(($311)|0);
-      var $313=HEAPU16[(($312)>>1)];
+      var $313=HEAP[$312];
       var $314=(($313)&65535);
       var $315=$1;
       var $316=(($315+4)|0);
@@ -15406,7 +15290,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $318=(($317+24)|0);
       var $319=$318;
       var $320=(($319)|0);
-      var $321=HEAPU16[(($320)>>1)];
+      var $321=HEAP[$320];
       var $322=(($321)&65535);
       var $323=(($314+$322)|0);
       var $324=(($323) & 65535);
@@ -15424,7 +15308,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $333=(($332+20)|0);
       var $334=$333;
       var $335=(($334)|0);
-      var $336=HEAPU16[(($335)>>1)];
+      var $336=HEAP[$335];
       var $337=(($336)&65535);
       var $338=$1;
       var $339=(($338+4)|0);
@@ -15432,7 +15316,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $341=(($340+28)|0);
       var $342=$341;
       var $343=(($342)|0);
-      var $344=HEAPU16[(($343)>>1)];
+      var $344=HEAP[$343];
       var $345=(($344)&65535);
       var $346=(($337+$345)|0);
       var $347=(($346) & 65535);
@@ -15450,7 +15334,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $356=(($355+24)|0);
       var $357=$356;
       var $358=(($357)|0);
-      var $359=HEAP16[(($358)>>1)];
+      var $359=HEAP[$358];
       $ofs=$359;
       __label__ = 60; break;
     case 51: 
@@ -15465,7 +15349,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $368=(($367+28)|0);
       var $369=$368;
       var $370=(($369)|0);
-      var $371=HEAP16[(($370)>>1)];
+      var $371=HEAP[$370];
       $ofs=$371;
       __label__ = 59; break;
     case 53: 
@@ -15480,7 +15364,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $380=(($379+20)|0);
       var $381=$380;
       var $382=(($381)|0);
-      var $383=HEAP16[(($382)>>1)];
+      var $383=HEAP[$382];
       $ofs=$383;
       __label__ = 58; break;
     case 55: 
@@ -15495,7 +15379,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $392=(($391+12)|0);
       var $393=$392;
       var $394=(($393)|0);
-      var $395=HEAP16[(($394)>>1)];
+      var $395=HEAP[$394];
       $ofs=$395;
       __label__ = 57; break;
     case 57: 
@@ -15579,9 +15463,9 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $454=_softx86_fetch($451, 0, $452, $453, 2);
       var $455=$7;
       var $456=$1;
-      var $457=HEAP16[(($rmv2)>>1)];
+      var $457=HEAP[$rmv2];
       var $458=FUNCTION_TABLE[$455]($456, $457);
-      HEAP16[(($rmv2)>>1)]=$458;
+      HEAP[$rmv2]=$458;
       var $459=$1;
       var $460=$lo;
       var $461=$rmv2;
@@ -15600,9 +15484,9 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $472=_softx86_fetch($470, 0, $471, $rmv3, 1);
       var $473=$6;
       var $474=$1;
-      var $475=HEAP8[($rmv3)];
+      var $475=HEAP[$rmv3];
       var $476=FUNCTION_TABLE[$473]($474, $475);
-      HEAP8[($rmv3)]=$476;
+      HEAP[$rmv3]=$476;
       var $477=$1;
       var $478=$lo;
       var $479=_softx86_write($477, 0, $478, $rmv3, 1);
@@ -15618,7 +15502,7 @@ function _sx86_exec_full_modrmonly_rw($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
 _sx86_exec_full_modrmonly_rw["X"]=1;
 
 function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, $op32) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 3; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -15636,7 +15520,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $lo;
       var $xx;
       var $rmv=__stackBase__;
-      var $rmv1=__stackBase__+4;
+      var $rmv1=__stackBase__+2;
       $1=$ctx;
       $2=$w16;
       $3=$d32;
@@ -15664,7 +15548,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $23=(($22+($19<<2))|0);
       var $24=$23;
       var $25=(($24)|0);
-      var $26=HEAP16[(($25)>>1)];
+      var $26=HEAP[$25];
       var $27=FUNCTION_TABLE[$16]($17, $26);
       __label__ = 5; break;
     case 4: 
@@ -15675,8 +15559,8 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $33=$1;
       var $34=(($33+204)|0);
       var $35=(($34+($32<<2))|0);
-      var $36=HEAP32[(($35)>>2)];
-      var $37=HEAP8[($36)];
+      var $36=HEAP[$35];
+      var $37=HEAP[$36];
       var $38=FUNCTION_TABLE[$29]($30, $37);
       __label__ = 5; break;
     case 5: 
@@ -15684,7 +15568,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
     case 6: 
       var $41=$1;
       var $42=(($41+236)|0);
-      var $43=HEAP8[($42)];
+      var $43=HEAP[$42];
       var $44=(($43 << 24) >> 24)!=0;
       if ($44) { __label__ = 15; break; } else { __label__ = 7; break; }
     case 7: 
@@ -15718,7 +15602,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $68=(($67+32)|0);
       var $69=(($68+16)|0);
       var $70=(($69)|0);
-      var $71=HEAP16[(($70)>>1)];
+      var $71=HEAP[$70];
       $seg=$71;
       __label__ = 14; break;
     case 13: 
@@ -15727,7 +15611,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $75=(($74+32)|0);
       var $76=(($75+24)|0);
       var $77=(($76)|0);
-      var $78=HEAP16[(($77)>>1)];
+      var $78=HEAP[$77];
       $seg=$78;
       __label__ = 14; break;
     case 14: 
@@ -15735,7 +15619,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
     case 15: 
       var $81=$1;
       var $82=(($81+238)|0);
-      var $83=HEAP16[(($82)>>1)];
+      var $83=HEAP[$82];
       $seg=$83;
       __label__ = 16; break;
     case 16: 
@@ -15775,7 +15659,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $112=(($111+12)|0);
       var $113=$112;
       var $114=(($113)|0);
-      var $115=HEAPU16[(($114)>>1)];
+      var $115=HEAP[$114];
       var $116=(($115)&65535);
       var $117=$1;
       var $118=(($117+4)|0);
@@ -15783,7 +15667,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $120=(($119+24)|0);
       var $121=$120;
       var $122=(($121)|0);
-      var $123=HEAPU16[(($122)>>1)];
+      var $123=HEAP[$122];
       var $124=(($123)&65535);
       var $125=(($116+$124)|0);
       var $126=(($125) & 65535);
@@ -15801,7 +15685,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $135=(($134+12)|0);
       var $136=$135;
       var $137=(($136)|0);
-      var $138=HEAPU16[(($137)>>1)];
+      var $138=HEAP[$137];
       var $139=(($138)&65535);
       var $140=$1;
       var $141=(($140+4)|0);
@@ -15809,7 +15693,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $143=(($142+28)|0);
       var $144=$143;
       var $145=(($144)|0);
-      var $146=HEAPU16[(($145)>>1)];
+      var $146=HEAP[$145];
       var $147=(($146)&65535);
       var $148=(($139+$147)|0);
       var $149=(($148) & 65535);
@@ -15827,7 +15711,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $158=(($157+20)|0);
       var $159=$158;
       var $160=(($159)|0);
-      var $161=HEAPU16[(($160)>>1)];
+      var $161=HEAP[$160];
       var $162=(($161)&65535);
       var $163=$1;
       var $164=(($163+4)|0);
@@ -15835,7 +15719,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $166=(($165+24)|0);
       var $167=$166;
       var $168=(($167)|0);
-      var $169=HEAPU16[(($168)>>1)];
+      var $169=HEAP[$168];
       var $170=(($169)&65535);
       var $171=(($162+$170)|0);
       var $172=(($171) & 65535);
@@ -15853,7 +15737,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $181=(($180+20)|0);
       var $182=$181;
       var $183=(($182)|0);
-      var $184=HEAPU16[(($183)>>1)];
+      var $184=HEAP[$183];
       var $185=(($184)&65535);
       var $186=$1;
       var $187=(($186+4)|0);
@@ -15861,7 +15745,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $189=(($188+28)|0);
       var $190=$189;
       var $191=(($190)|0);
-      var $192=HEAPU16[(($191)>>1)];
+      var $192=HEAP[$191];
       var $193=(($192)&65535);
       var $194=(($185+$193)|0);
       var $195=(($194) & 65535);
@@ -15879,7 +15763,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $204=(($203+24)|0);
       var $205=$204;
       var $206=(($205)|0);
-      var $207=HEAP16[(($206)>>1)];
+      var $207=HEAP[$206];
       $ofs=$207;
       __label__ = 35; break;
     case 29: 
@@ -15894,7 +15778,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $216=(($215+28)|0);
       var $217=$216;
       var $218=(($217)|0);
-      var $219=HEAP16[(($218)>>1)];
+      var $219=HEAP[$218];
       $ofs=$219;
       __label__ = 34; break;
     case 31: 
@@ -15909,7 +15793,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $228=(($227+12)|0);
       var $229=$228;
       var $230=(($229)|0);
-      var $231=HEAP16[(($230)>>1)];
+      var $231=HEAP[$230];
       $ofs=$231;
       __label__ = 33; break;
     case 33: 
@@ -15940,7 +15824,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $248=(($247+12)|0);
       var $249=$248;
       var $250=(($249)|0);
-      var $251=HEAPU16[(($250)>>1)];
+      var $251=HEAP[$250];
       var $252=(($251)&65535);
       var $253=$1;
       var $254=(($253+4)|0);
@@ -15948,7 +15832,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $256=(($255+24)|0);
       var $257=$256;
       var $258=(($257)|0);
-      var $259=HEAPU16[(($258)>>1)];
+      var $259=HEAP[$258];
       var $260=(($259)&65535);
       var $261=(($252+$260)|0);
       var $262=(($261) & 65535);
@@ -15966,7 +15850,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $271=(($270+12)|0);
       var $272=$271;
       var $273=(($272)|0);
-      var $274=HEAPU16[(($273)>>1)];
+      var $274=HEAP[$273];
       var $275=(($274)&65535);
       var $276=$1;
       var $277=(($276+4)|0);
@@ -15974,7 +15858,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $279=(($278+28)|0);
       var $280=$279;
       var $281=(($280)|0);
-      var $282=HEAPU16[(($281)>>1)];
+      var $282=HEAP[$281];
       var $283=(($282)&65535);
       var $284=(($275+$283)|0);
       var $285=(($284) & 65535);
@@ -15992,7 +15876,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $294=(($293+20)|0);
       var $295=$294;
       var $296=(($295)|0);
-      var $297=HEAPU16[(($296)>>1)];
+      var $297=HEAP[$296];
       var $298=(($297)&65535);
       var $299=$1;
       var $300=(($299+4)|0);
@@ -16000,7 +15884,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $302=(($301+24)|0);
       var $303=$302;
       var $304=(($303)|0);
-      var $305=HEAPU16[(($304)>>1)];
+      var $305=HEAP[$304];
       var $306=(($305)&65535);
       var $307=(($298+$306)|0);
       var $308=(($307) & 65535);
@@ -16018,7 +15902,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $317=(($316+20)|0);
       var $318=$317;
       var $319=(($318)|0);
-      var $320=HEAPU16[(($319)>>1)];
+      var $320=HEAP[$319];
       var $321=(($320)&65535);
       var $322=$1;
       var $323=(($322+4)|0);
@@ -16026,7 +15910,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $325=(($324+28)|0);
       var $326=$325;
       var $327=(($326)|0);
-      var $328=HEAPU16[(($327)>>1)];
+      var $328=HEAP[$327];
       var $329=(($328)&65535);
       var $330=(($321+$329)|0);
       var $331=(($330) & 65535);
@@ -16044,7 +15928,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $340=(($339+24)|0);
       var $341=$340;
       var $342=(($341)|0);
-      var $343=HEAP16[(($342)>>1)];
+      var $343=HEAP[$342];
       $ofs=$343;
       __label__ = 60; break;
     case 51: 
@@ -16059,7 +15943,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $352=(($351+28)|0);
       var $353=$352;
       var $354=(($353)|0);
-      var $355=HEAP16[(($354)>>1)];
+      var $355=HEAP[$354];
       $ofs=$355;
       __label__ = 59; break;
     case 53: 
@@ -16074,7 +15958,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $364=(($363+20)|0);
       var $365=$364;
       var $366=(($365)|0);
-      var $367=HEAP16[(($366)>>1)];
+      var $367=HEAP[$366];
       $ofs=$367;
       __label__ = 58; break;
     case 55: 
@@ -16089,7 +15973,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $376=(($375+12)|0);
       var $377=$376;
       var $378=(($377)|0);
-      var $379=HEAP16[(($378)>>1)];
+      var $379=HEAP[$378];
       $ofs=$379;
       __label__ = 57; break;
     case 57: 
@@ -16173,7 +16057,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $438=_softx86_fetch($435, 0, $436, $437, 2);
       var $439=$7;
       var $440=$1;
-      var $441=HEAP16[(($rmv)>>1)];
+      var $441=HEAP[$rmv];
       var $442=FUNCTION_TABLE[$439]($440, $441);
       __label__ = 73; break;
     case 72: 
@@ -16189,7 +16073,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $452=_softx86_fetch($450, 0, $451, $rmv1, 1);
       var $453=$6;
       var $454=$1;
-      var $455=HEAP8[($rmv1)];
+      var $455=HEAP[$rmv1];
       var $456=FUNCTION_TABLE[$453]($454, $455);
       __label__ = 73; break;
     case 73: 
@@ -16203,7 +16087,7 @@ function _sx86_exec_full_modrmonly_ro($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
 _sx86_exec_full_modrmonly_ro["X"]=1;
 
 function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, $op32) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 3; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -16221,7 +16105,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $lo;
       var $xx;
       var $rmv=__stackBase__;
-      var $rmv1=__stackBase__+4;
+      var $rmv1=__stackBase__+2;
       $1=$ctx;
       $2=$w16;
       $3=$d32;
@@ -16250,7 +16134,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $24=(($23+($20<<2))|0);
       var $25=$24;
       var $26=(($25)|0);
-      HEAP16[(($26)>>1)]=$18;
+      HEAP[$26]=$18;
       __label__ = 5; break;
     case 4: 
       var $28=$6;
@@ -16261,15 +16145,15 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $33=$1;
       var $34=(($33+204)|0);
       var $35=(($34+($32<<2))|0);
-      var $36=HEAP32[(($35)>>2)];
-      HEAP8[($36)]=$30;
+      var $36=HEAP[$35];
+      HEAP[$36]=$30;
       __label__ = 5; break;
     case 5: 
       __label__ = 74; break;
     case 6: 
       var $39=$1;
       var $40=(($39+236)|0);
-      var $41=HEAP8[($40)];
+      var $41=HEAP[$40];
       var $42=(($41 << 24) >> 24)!=0;
       if ($42) { __label__ = 15; break; } else { __label__ = 7; break; }
     case 7: 
@@ -16303,7 +16187,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $66=(($65+32)|0);
       var $67=(($66+16)|0);
       var $68=(($67)|0);
-      var $69=HEAP16[(($68)>>1)];
+      var $69=HEAP[$68];
       $seg=$69;
       __label__ = 14; break;
     case 13: 
@@ -16312,7 +16196,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $73=(($72+32)|0);
       var $74=(($73+24)|0);
       var $75=(($74)|0);
-      var $76=HEAP16[(($75)>>1)];
+      var $76=HEAP[$75];
       $seg=$76;
       __label__ = 14; break;
     case 14: 
@@ -16320,7 +16204,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
     case 15: 
       var $79=$1;
       var $80=(($79+238)|0);
-      var $81=HEAP16[(($80)>>1)];
+      var $81=HEAP[$80];
       $seg=$81;
       __label__ = 16; break;
     case 16: 
@@ -16360,7 +16244,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $110=(($109+12)|0);
       var $111=$110;
       var $112=(($111)|0);
-      var $113=HEAPU16[(($112)>>1)];
+      var $113=HEAP[$112];
       var $114=(($113)&65535);
       var $115=$1;
       var $116=(($115+4)|0);
@@ -16368,7 +16252,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $118=(($117+24)|0);
       var $119=$118;
       var $120=(($119)|0);
-      var $121=HEAPU16[(($120)>>1)];
+      var $121=HEAP[$120];
       var $122=(($121)&65535);
       var $123=(($114+$122)|0);
       var $124=(($123) & 65535);
@@ -16386,7 +16270,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $133=(($132+12)|0);
       var $134=$133;
       var $135=(($134)|0);
-      var $136=HEAPU16[(($135)>>1)];
+      var $136=HEAP[$135];
       var $137=(($136)&65535);
       var $138=$1;
       var $139=(($138+4)|0);
@@ -16394,7 +16278,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $141=(($140+28)|0);
       var $142=$141;
       var $143=(($142)|0);
-      var $144=HEAPU16[(($143)>>1)];
+      var $144=HEAP[$143];
       var $145=(($144)&65535);
       var $146=(($137+$145)|0);
       var $147=(($146) & 65535);
@@ -16412,7 +16296,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $156=(($155+20)|0);
       var $157=$156;
       var $158=(($157)|0);
-      var $159=HEAPU16[(($158)>>1)];
+      var $159=HEAP[$158];
       var $160=(($159)&65535);
       var $161=$1;
       var $162=(($161+4)|0);
@@ -16420,7 +16304,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $164=(($163+24)|0);
       var $165=$164;
       var $166=(($165)|0);
-      var $167=HEAPU16[(($166)>>1)];
+      var $167=HEAP[$166];
       var $168=(($167)&65535);
       var $169=(($160+$168)|0);
       var $170=(($169) & 65535);
@@ -16438,7 +16322,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $179=(($178+20)|0);
       var $180=$179;
       var $181=(($180)|0);
-      var $182=HEAPU16[(($181)>>1)];
+      var $182=HEAP[$181];
       var $183=(($182)&65535);
       var $184=$1;
       var $185=(($184+4)|0);
@@ -16446,7 +16330,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $187=(($186+28)|0);
       var $188=$187;
       var $189=(($188)|0);
-      var $190=HEAPU16[(($189)>>1)];
+      var $190=HEAP[$189];
       var $191=(($190)&65535);
       var $192=(($183+$191)|0);
       var $193=(($192) & 65535);
@@ -16464,7 +16348,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $202=(($201+24)|0);
       var $203=$202;
       var $204=(($203)|0);
-      var $205=HEAP16[(($204)>>1)];
+      var $205=HEAP[$204];
       $ofs=$205;
       __label__ = 35; break;
     case 29: 
@@ -16479,7 +16363,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $214=(($213+28)|0);
       var $215=$214;
       var $216=(($215)|0);
-      var $217=HEAP16[(($216)>>1)];
+      var $217=HEAP[$216];
       $ofs=$217;
       __label__ = 34; break;
     case 31: 
@@ -16494,7 +16378,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $226=(($225+12)|0);
       var $227=$226;
       var $228=(($227)|0);
-      var $229=HEAP16[(($228)>>1)];
+      var $229=HEAP[$228];
       $ofs=$229;
       __label__ = 33; break;
     case 33: 
@@ -16525,7 +16409,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $246=(($245+12)|0);
       var $247=$246;
       var $248=(($247)|0);
-      var $249=HEAPU16[(($248)>>1)];
+      var $249=HEAP[$248];
       var $250=(($249)&65535);
       var $251=$1;
       var $252=(($251+4)|0);
@@ -16533,7 +16417,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $254=(($253+24)|0);
       var $255=$254;
       var $256=(($255)|0);
-      var $257=HEAPU16[(($256)>>1)];
+      var $257=HEAP[$256];
       var $258=(($257)&65535);
       var $259=(($250+$258)|0);
       var $260=(($259) & 65535);
@@ -16551,7 +16435,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $269=(($268+12)|0);
       var $270=$269;
       var $271=(($270)|0);
-      var $272=HEAPU16[(($271)>>1)];
+      var $272=HEAP[$271];
       var $273=(($272)&65535);
       var $274=$1;
       var $275=(($274+4)|0);
@@ -16559,7 +16443,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $277=(($276+28)|0);
       var $278=$277;
       var $279=(($278)|0);
-      var $280=HEAPU16[(($279)>>1)];
+      var $280=HEAP[$279];
       var $281=(($280)&65535);
       var $282=(($273+$281)|0);
       var $283=(($282) & 65535);
@@ -16577,7 +16461,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $292=(($291+20)|0);
       var $293=$292;
       var $294=(($293)|0);
-      var $295=HEAPU16[(($294)>>1)];
+      var $295=HEAP[$294];
       var $296=(($295)&65535);
       var $297=$1;
       var $298=(($297+4)|0);
@@ -16585,7 +16469,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $300=(($299+24)|0);
       var $301=$300;
       var $302=(($301)|0);
-      var $303=HEAPU16[(($302)>>1)];
+      var $303=HEAP[$302];
       var $304=(($303)&65535);
       var $305=(($296+$304)|0);
       var $306=(($305) & 65535);
@@ -16603,7 +16487,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $315=(($314+20)|0);
       var $316=$315;
       var $317=(($316)|0);
-      var $318=HEAPU16[(($317)>>1)];
+      var $318=HEAP[$317];
       var $319=(($318)&65535);
       var $320=$1;
       var $321=(($320+4)|0);
@@ -16611,7 +16495,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $323=(($322+28)|0);
       var $324=$323;
       var $325=(($324)|0);
-      var $326=HEAPU16[(($325)>>1)];
+      var $326=HEAP[$325];
       var $327=(($326)&65535);
       var $328=(($319+$327)|0);
       var $329=(($328) & 65535);
@@ -16629,7 +16513,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $338=(($337+24)|0);
       var $339=$338;
       var $340=(($339)|0);
-      var $341=HEAP16[(($340)>>1)];
+      var $341=HEAP[$340];
       $ofs=$341;
       __label__ = 60; break;
     case 51: 
@@ -16644,7 +16528,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $350=(($349+28)|0);
       var $351=$350;
       var $352=(($351)|0);
-      var $353=HEAP16[(($352)>>1)];
+      var $353=HEAP[$352];
       $ofs=$353;
       __label__ = 59; break;
     case 53: 
@@ -16659,7 +16543,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $362=(($361+20)|0);
       var $363=$362;
       var $364=(($363)|0);
-      var $365=HEAP16[(($364)>>1)];
+      var $365=HEAP[$364];
       $ofs=$365;
       __label__ = 58; break;
     case 55: 
@@ -16674,7 +16558,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $374=(($373+12)|0);
       var $375=$374;
       var $376=(($375)|0);
-      var $377=HEAP16[(($376)>>1)];
+      var $377=HEAP[$376];
       $ofs=$377;
       __label__ = 57; break;
     case 57: 
@@ -16755,7 +16639,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $433=$7;
       var $434=$1;
       var $435=FUNCTION_TABLE[$433]($434);
-      HEAP16[(($rmv)>>1)]=$435;
+      HEAP[$rmv]=$435;
       var $436=$1;
       var $437=$lo;
       var $438=$rmv;
@@ -16772,7 +16656,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
       var $447=$6;
       var $448=$1;
       var $449=FUNCTION_TABLE[$447]($448);
-      HEAP8[($rmv1)]=$449;
+      HEAP[$rmv1]=$449;
       var $450=$1;
       var $451=$lo;
       var $452=_softx86_write($450, 0, $451, $rmv1, 1);
@@ -16788,7 +16672,7 @@ function _sx86_exec_full_modrmonly_wo($ctx, $w16, $d32, $mod, $rm, $op8, $op16, 
 _sx86_exec_full_modrmonly_wo["X"]=1;
 
 function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 4; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -16804,7 +16688,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $lo;
       var $xx;
       var $rmv=__stackBase__;
-      var $rmv2=__stackBase__+4;
+      var $rmv2=__stackBase__+2;
       $1=$ctx;
       $2=$d32;
       $3=$mod;
@@ -16820,7 +16704,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
     case 3: 
       var $12=$1;
       var $13=(($12+236)|0);
-      var $14=HEAP8[($13)];
+      var $14=HEAP[$13];
       var $15=(($14 << 24) >> 24)!=0;
       if ($15) { __label__ = 12; break; } else { __label__ = 4; break; }
     case 4: 
@@ -16854,7 +16738,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $39=(($38+32)|0);
       var $40=(($39+16)|0);
       var $41=(($40)|0);
-      var $42=HEAP16[(($41)>>1)];
+      var $42=HEAP[$41];
       $seg=$42;
       __label__ = 11; break;
     case 10: 
@@ -16863,7 +16747,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $46=(($45+32)|0);
       var $47=(($46+24)|0);
       var $48=(($47)|0);
-      var $49=HEAP16[(($48)>>1)];
+      var $49=HEAP[$48];
       $seg=$49;
       __label__ = 11; break;
     case 11: 
@@ -16871,7 +16755,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
     case 12: 
       var $52=$1;
       var $53=(($52+238)|0);
-      var $54=HEAP16[(($53)>>1)];
+      var $54=HEAP[$53];
       $seg=$54;
       __label__ = 13; break;
     case 13: 
@@ -16911,7 +16795,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $83=(($82+12)|0);
       var $84=$83;
       var $85=(($84)|0);
-      var $86=HEAPU16[(($85)>>1)];
+      var $86=HEAP[$85];
       var $87=(($86)&65535);
       var $88=$1;
       var $89=(($88+4)|0);
@@ -16919,7 +16803,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $91=(($90+24)|0);
       var $92=$91;
       var $93=(($92)|0);
-      var $94=HEAPU16[(($93)>>1)];
+      var $94=HEAP[$93];
       var $95=(($94)&65535);
       var $96=(($87+$95)|0);
       var $97=(($96) & 65535);
@@ -16937,7 +16821,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $106=(($105+12)|0);
       var $107=$106;
       var $108=(($107)|0);
-      var $109=HEAPU16[(($108)>>1)];
+      var $109=HEAP[$108];
       var $110=(($109)&65535);
       var $111=$1;
       var $112=(($111+4)|0);
@@ -16945,7 +16829,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $114=(($113+28)|0);
       var $115=$114;
       var $116=(($115)|0);
-      var $117=HEAPU16[(($116)>>1)];
+      var $117=HEAP[$116];
       var $118=(($117)&65535);
       var $119=(($110+$118)|0);
       var $120=(($119) & 65535);
@@ -16963,7 +16847,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $129=(($128+20)|0);
       var $130=$129;
       var $131=(($130)|0);
-      var $132=HEAPU16[(($131)>>1)];
+      var $132=HEAP[$131];
       var $133=(($132)&65535);
       var $134=$1;
       var $135=(($134+4)|0);
@@ -16971,7 +16855,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $137=(($136+24)|0);
       var $138=$137;
       var $139=(($138)|0);
-      var $140=HEAPU16[(($139)>>1)];
+      var $140=HEAP[$139];
       var $141=(($140)&65535);
       var $142=(($133+$141)|0);
       var $143=(($142) & 65535);
@@ -16989,7 +16873,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $152=(($151+20)|0);
       var $153=$152;
       var $154=(($153)|0);
-      var $155=HEAPU16[(($154)>>1)];
+      var $155=HEAP[$154];
       var $156=(($155)&65535);
       var $157=$1;
       var $158=(($157+4)|0);
@@ -16997,7 +16881,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $160=(($159+28)|0);
       var $161=$160;
       var $162=(($161)|0);
-      var $163=HEAPU16[(($162)>>1)];
+      var $163=HEAP[$162];
       var $164=(($163)&65535);
       var $165=(($156+$164)|0);
       var $166=(($165) & 65535);
@@ -17015,7 +16899,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $175=(($174+24)|0);
       var $176=$175;
       var $177=(($176)|0);
-      var $178=HEAP16[(($177)>>1)];
+      var $178=HEAP[$177];
       $ofs=$178;
       __label__ = 32; break;
     case 26: 
@@ -17030,7 +16914,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $187=(($186+28)|0);
       var $188=$187;
       var $189=(($188)|0);
-      var $190=HEAP16[(($189)>>1)];
+      var $190=HEAP[$189];
       $ofs=$190;
       __label__ = 31; break;
     case 28: 
@@ -17045,7 +16929,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $199=(($198+12)|0);
       var $200=$199;
       var $201=(($200)|0);
-      var $202=HEAP16[(($201)>>1)];
+      var $202=HEAP[$201];
       $ofs=$202;
       __label__ = 30; break;
     case 30: 
@@ -17076,7 +16960,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $219=(($218+12)|0);
       var $220=$219;
       var $221=(($220)|0);
-      var $222=HEAPU16[(($221)>>1)];
+      var $222=HEAP[$221];
       var $223=(($222)&65535);
       var $224=$1;
       var $225=(($224+4)|0);
@@ -17084,7 +16968,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $227=(($226+24)|0);
       var $228=$227;
       var $229=(($228)|0);
-      var $230=HEAPU16[(($229)>>1)];
+      var $230=HEAP[$229];
       var $231=(($230)&65535);
       var $232=(($223+$231)|0);
       var $233=(($232) & 65535);
@@ -17102,7 +16986,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $242=(($241+12)|0);
       var $243=$242;
       var $244=(($243)|0);
-      var $245=HEAPU16[(($244)>>1)];
+      var $245=HEAP[$244];
       var $246=(($245)&65535);
       var $247=$1;
       var $248=(($247+4)|0);
@@ -17110,7 +16994,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $250=(($249+28)|0);
       var $251=$250;
       var $252=(($251)|0);
-      var $253=HEAPU16[(($252)>>1)];
+      var $253=HEAP[$252];
       var $254=(($253)&65535);
       var $255=(($246+$254)|0);
       var $256=(($255) & 65535);
@@ -17128,7 +17012,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $265=(($264+20)|0);
       var $266=$265;
       var $267=(($266)|0);
-      var $268=HEAPU16[(($267)>>1)];
+      var $268=HEAP[$267];
       var $269=(($268)&65535);
       var $270=$1;
       var $271=(($270+4)|0);
@@ -17136,7 +17020,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $273=(($272+24)|0);
       var $274=$273;
       var $275=(($274)|0);
-      var $276=HEAPU16[(($275)>>1)];
+      var $276=HEAP[$275];
       var $277=(($276)&65535);
       var $278=(($269+$277)|0);
       var $279=(($278) & 65535);
@@ -17154,7 +17038,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $288=(($287+20)|0);
       var $289=$288;
       var $290=(($289)|0);
-      var $291=HEAPU16[(($290)>>1)];
+      var $291=HEAP[$290];
       var $292=(($291)&65535);
       var $293=$1;
       var $294=(($293+4)|0);
@@ -17162,7 +17046,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $296=(($295+28)|0);
       var $297=$296;
       var $298=(($297)|0);
-      var $299=HEAPU16[(($298)>>1)];
+      var $299=HEAP[$298];
       var $300=(($299)&65535);
       var $301=(($292+$300)|0);
       var $302=(($301) & 65535);
@@ -17180,7 +17064,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $311=(($310+24)|0);
       var $312=$311;
       var $313=(($312)|0);
-      var $314=HEAP16[(($313)>>1)];
+      var $314=HEAP[$313];
       $ofs=$314;
       __label__ = 57; break;
     case 48: 
@@ -17195,7 +17079,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $323=(($322+28)|0);
       var $324=$323;
       var $325=(($324)|0);
-      var $326=HEAP16[(($325)>>1)];
+      var $326=HEAP[$325];
       $ofs=$326;
       __label__ = 56; break;
     case 50: 
@@ -17210,7 +17094,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $335=(($334+20)|0);
       var $336=$335;
       var $337=(($336)|0);
-      var $338=HEAP16[(($337)>>1)];
+      var $338=HEAP[$337];
       $ofs=$338;
       __label__ = 55; break;
     case 52: 
@@ -17225,7 +17109,7 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $347=(($346+12)|0);
       var $348=$347;
       var $349=(($348)|0);
-      var $350=HEAP16[(($349)>>1)];
+      var $350=HEAP[$349];
       $ofs=$350;
       __label__ = 54; break;
     case 54: 
@@ -17312,8 +17196,8 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
       var $412=_softx86_fetch($409, 0, $410, $411, 2);
       var $413=$5;
       var $414=$1;
-      var $415=HEAP16[(($rmv2)>>1)];
-      var $416=HEAP16[(($rmv)>>1)];
+      var $415=HEAP[$rmv2];
+      var $416=HEAP[$rmv];
       FUNCTION_TABLE[$413]($414, $415, $416);
       __label__ = 68; break;
     case 68: 
@@ -17323,6 +17207,8 @@ function _sx86_exec_full_modrmonly_callfar($ctx, $d32, $mod, $rm, $op16, $op32) 
   }
 }
 _sx86_exec_full_modrmonly_callfar["X"]=1;
+// Warning: 64 bit AND - precision limit may be hit on llvm line 18329
+// Warning: 64 bit XOR - precision limit may be hit on llvm line 18332
 
 function _softx86_parity8($ret) {
   ;
@@ -17453,19 +17339,16 @@ function _softx86_parity32($ret) {
 }
 
 
-function _softx86_parity64($ret$0, $ret$1) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+function _softx86_parity64($ret) {
+  ;
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
     case 1: 
-      var $1=__stackBase__;
+      var $1;
       var $b;
       var $p;
-      var $st$3$0=(($1)|0);
-      HEAP32[(($st$3$0)>>2)]=$ret$0;
-      var $st$3$1=(($1+4)|0);
-      HEAP32[(($st$3$1)>>2)]=$ret$1;
+      $1=$ret;
       $p=1;
       $b=0;
       __label__ = 2; break;
@@ -17474,32 +17357,16 @@ function _softx86_parity64($ret$0, $ret$1) {
       var $4=(($3)|0) < 64;
       if ($4) { __label__ = 3; break; } else { __label__ = 5; break; }
     case 3: 
-      var $st$0$0=(($1)|0);
-      var $6$0=HEAP32[(($st$0$0)>>2)];
-      var $st$0$1=(($1+4)|0);
-      var $6$1=HEAP32[(($st$0$1)>>2)];
-      var $$emscripten$temp$0$0=1;
-      var $$emscripten$temp$0$1=0;
-      var $7$0=$6$0 & $$emscripten$temp$0$0;
-      var $7$1=$6$1 & $$emscripten$temp$0$1;
+      var $6=$1;
+      var $7=Runtime.and64($6, 1);
       var $8=$p;
-      var $9$0=$8;
-      var $9$1=(($8|0) < 0 ? -1 : 0);
-      var $10$0=$9$0 ^ $7$0;
-      var $10$1=$9$1 ^ $7$1;
-      var $11$0=$10$0;
-      var $11=$11$0;
+      var $9=(($8)|0);
+      var $10=Runtime.xor64($9, $7);
+      var $11=(($10) & 4294967295);
       $p=$11;
-      var $st$16$0=(($1)|0);
-      var $12$0=HEAPU32[(($st$16$0)>>2)];
-      var $st$16$1=(($1+4)|0);
-      var $12$1=HEAPU32[(($st$16$1)>>2)];
-      var $13$0=($12$0 >>> 1) | ($12$1 << 31);
-      var $13$1=($12$1 >>> 1) | (0 << 31);
-      var $st$22$0=(($1)|0);
-      HEAP32[(($st$22$0)>>2)]=$13$0;
-      var $st$22$1=(($1+4)|0);
-      HEAP32[(($st$22$1)>>2)]=$13$1;
+      var $12=$1;
+      var $13=(tempBigIntI=($12 >= 0 ? $12 : 18446744073709552000+$12)/2,tempBigIntI-tempBigIntI%1);
+      $1=$13;
       __label__ = 4; break;
     case 4: 
       var $15=$b;
@@ -17508,7 +17375,7 @@ function _softx86_parity64($ret$0, $ret$1) {
       __label__ = 2; break;
     case 5: 
       var $18=$p;
-      STACKTOP = __stackBase__;
+      ;
       return $18;
     default: assert(0, "bad label: " + __label__);
   }
@@ -17516,7 +17383,7 @@ function _softx86_parity64($ret$0, $ret$1) {
 
 
 function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
-  var __stackBase__  = STACKTOP; STACKTOP += 16; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 6; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -17534,9 +17401,9 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $lo;
       var $xx;
       var $tmp2=__stackBase__;
-      var $mem=__stackBase__+4;
-      var $tmp3=__stackBase__+8;
-      var $mem4=__stackBase__+12;
+      var $mem=__stackBase__+2;
+      var $tmp3=__stackBase__+4;
+      var $mem4=__stackBase__+5;
       $1=$ctx;
       $2=$w16;
       $3=$d32;
@@ -17560,7 +17427,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $19=(($18+($15<<2))|0);
       var $20=$19;
       var $21=(($20)|0);
-      var $22=HEAP16[(($21)>>1)];
+      var $22=HEAP[$21];
       $tmp=$22;
       var $23=$6;
       var $24=(($23)&255);
@@ -17570,7 +17437,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $28=(($27+($24<<2))|0);
       var $29=$28;
       var $30=(($29)|0);
-      var $31=HEAP16[(($30)>>1)];
+      var $31=HEAP[$30];
       var $32=$5;
       var $33=(($32)&255);
       var $34=$1;
@@ -17579,7 +17446,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $37=(($36+($33<<2))|0);
       var $38=$37;
       var $39=(($38)|0);
-      HEAP16[(($39)>>1)]=$31;
+      HEAP[$39]=$31;
       var $40=$tmp;
       var $41=$6;
       var $42=(($41)&255);
@@ -17589,7 +17456,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $46=(($45+($42<<2))|0);
       var $47=$46;
       var $48=(($47)|0);
-      HEAP16[(($48)>>1)]=$40;
+      HEAP[$48]=$40;
       __label__ = 5; break;
     case 4: 
       var $50=$5;
@@ -17597,38 +17464,38 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $52=$1;
       var $53=(($52+204)|0);
       var $54=(($53+($51<<2))|0);
-      var $55=HEAP32[(($54)>>2)];
-      var $56=HEAP8[($55)];
+      var $55=HEAP[$54];
+      var $56=HEAP[$55];
       $tmp1=$56;
       var $57=$6;
       var $58=(($57)&255);
       var $59=$1;
       var $60=(($59+204)|0);
       var $61=(($60+($58<<2))|0);
-      var $62=HEAP32[(($61)>>2)];
-      var $63=HEAP8[($62)];
+      var $62=HEAP[$61];
+      var $63=HEAP[$62];
       var $64=$5;
       var $65=(($64)&255);
       var $66=$1;
       var $67=(($66+204)|0);
       var $68=(($67+($65<<2))|0);
-      var $69=HEAP32[(($68)>>2)];
-      HEAP8[($69)]=$63;
+      var $69=HEAP[$68];
+      HEAP[$69]=$63;
       var $70=$tmp1;
       var $71=$6;
       var $72=(($71)&255);
       var $73=$1;
       var $74=(($73+204)|0);
       var $75=(($74+($72<<2))|0);
-      var $76=HEAP32[(($75)>>2)];
-      HEAP8[($76)]=$70;
+      var $76=HEAP[$75];
+      HEAP[$76]=$70;
       __label__ = 5; break;
     case 5: 
       __label__ = 74; break;
     case 6: 
       var $79=$1;
       var $80=(($79+236)|0);
-      var $81=HEAP8[($80)];
+      var $81=HEAP[$80];
       var $82=(($81 << 24) >> 24)!=0;
       if ($82) { __label__ = 15; break; } else { __label__ = 7; break; }
     case 7: 
@@ -17662,7 +17529,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $106=(($105+32)|0);
       var $107=(($106+16)|0);
       var $108=(($107)|0);
-      var $109=HEAP16[(($108)>>1)];
+      var $109=HEAP[$108];
       $seg=$109;
       __label__ = 14; break;
     case 13: 
@@ -17671,7 +17538,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $113=(($112+32)|0);
       var $114=(($113+24)|0);
       var $115=(($114)|0);
-      var $116=HEAP16[(($115)>>1)];
+      var $116=HEAP[$115];
       $seg=$116;
       __label__ = 14; break;
     case 14: 
@@ -17679,7 +17546,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
     case 15: 
       var $119=$1;
       var $120=(($119+238)|0);
-      var $121=HEAP16[(($120)>>1)];
+      var $121=HEAP[$120];
       $seg=$121;
       __label__ = 16; break;
     case 16: 
@@ -17719,7 +17586,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $150=(($149+12)|0);
       var $151=$150;
       var $152=(($151)|0);
-      var $153=HEAPU16[(($152)>>1)];
+      var $153=HEAP[$152];
       var $154=(($153)&65535);
       var $155=$1;
       var $156=(($155+4)|0);
@@ -17727,7 +17594,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $158=(($157+24)|0);
       var $159=$158;
       var $160=(($159)|0);
-      var $161=HEAPU16[(($160)>>1)];
+      var $161=HEAP[$160];
       var $162=(($161)&65535);
       var $163=(($154+$162)|0);
       var $164=(($163) & 65535);
@@ -17745,7 +17612,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $173=(($172+12)|0);
       var $174=$173;
       var $175=(($174)|0);
-      var $176=HEAPU16[(($175)>>1)];
+      var $176=HEAP[$175];
       var $177=(($176)&65535);
       var $178=$1;
       var $179=(($178+4)|0);
@@ -17753,7 +17620,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $181=(($180+28)|0);
       var $182=$181;
       var $183=(($182)|0);
-      var $184=HEAPU16[(($183)>>1)];
+      var $184=HEAP[$183];
       var $185=(($184)&65535);
       var $186=(($177+$185)|0);
       var $187=(($186) & 65535);
@@ -17771,7 +17638,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $196=(($195+20)|0);
       var $197=$196;
       var $198=(($197)|0);
-      var $199=HEAPU16[(($198)>>1)];
+      var $199=HEAP[$198];
       var $200=(($199)&65535);
       var $201=$1;
       var $202=(($201+4)|0);
@@ -17779,7 +17646,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $204=(($203+24)|0);
       var $205=$204;
       var $206=(($205)|0);
-      var $207=HEAPU16[(($206)>>1)];
+      var $207=HEAP[$206];
       var $208=(($207)&65535);
       var $209=(($200+$208)|0);
       var $210=(($209) & 65535);
@@ -17797,7 +17664,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $219=(($218+20)|0);
       var $220=$219;
       var $221=(($220)|0);
-      var $222=HEAPU16[(($221)>>1)];
+      var $222=HEAP[$221];
       var $223=(($222)&65535);
       var $224=$1;
       var $225=(($224+4)|0);
@@ -17805,7 +17672,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $227=(($226+28)|0);
       var $228=$227;
       var $229=(($228)|0);
-      var $230=HEAPU16[(($229)>>1)];
+      var $230=HEAP[$229];
       var $231=(($230)&65535);
       var $232=(($223+$231)|0);
       var $233=(($232) & 65535);
@@ -17823,7 +17690,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $242=(($241+24)|0);
       var $243=$242;
       var $244=(($243)|0);
-      var $245=HEAP16[(($244)>>1)];
+      var $245=HEAP[$244];
       $ofs=$245;
       __label__ = 35; break;
     case 29: 
@@ -17838,7 +17705,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $254=(($253+28)|0);
       var $255=$254;
       var $256=(($255)|0);
-      var $257=HEAP16[(($256)>>1)];
+      var $257=HEAP[$256];
       $ofs=$257;
       __label__ = 34; break;
     case 31: 
@@ -17853,7 +17720,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $266=(($265+12)|0);
       var $267=$266;
       var $268=(($267)|0);
-      var $269=HEAP16[(($268)>>1)];
+      var $269=HEAP[$268];
       $ofs=$269;
       __label__ = 33; break;
     case 33: 
@@ -17884,7 +17751,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $286=(($285+12)|0);
       var $287=$286;
       var $288=(($287)|0);
-      var $289=HEAPU16[(($288)>>1)];
+      var $289=HEAP[$288];
       var $290=(($289)&65535);
       var $291=$1;
       var $292=(($291+4)|0);
@@ -17892,7 +17759,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $294=(($293+24)|0);
       var $295=$294;
       var $296=(($295)|0);
-      var $297=HEAPU16[(($296)>>1)];
+      var $297=HEAP[$296];
       var $298=(($297)&65535);
       var $299=(($290+$298)|0);
       var $300=(($299) & 65535);
@@ -17910,7 +17777,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $309=(($308+12)|0);
       var $310=$309;
       var $311=(($310)|0);
-      var $312=HEAPU16[(($311)>>1)];
+      var $312=HEAP[$311];
       var $313=(($312)&65535);
       var $314=$1;
       var $315=(($314+4)|0);
@@ -17918,7 +17785,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $317=(($316+28)|0);
       var $318=$317;
       var $319=(($318)|0);
-      var $320=HEAPU16[(($319)>>1)];
+      var $320=HEAP[$319];
       var $321=(($320)&65535);
       var $322=(($313+$321)|0);
       var $323=(($322) & 65535);
@@ -17936,7 +17803,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $332=(($331+20)|0);
       var $333=$332;
       var $334=(($333)|0);
-      var $335=HEAPU16[(($334)>>1)];
+      var $335=HEAP[$334];
       var $336=(($335)&65535);
       var $337=$1;
       var $338=(($337+4)|0);
@@ -17944,7 +17811,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $340=(($339+24)|0);
       var $341=$340;
       var $342=(($341)|0);
-      var $343=HEAPU16[(($342)>>1)];
+      var $343=HEAP[$342];
       var $344=(($343)&65535);
       var $345=(($336+$344)|0);
       var $346=(($345) & 65535);
@@ -17962,7 +17829,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $355=(($354+20)|0);
       var $356=$355;
       var $357=(($356)|0);
-      var $358=HEAPU16[(($357)>>1)];
+      var $358=HEAP[$357];
       var $359=(($358)&65535);
       var $360=$1;
       var $361=(($360+4)|0);
@@ -17970,7 +17837,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $363=(($362+28)|0);
       var $364=$363;
       var $365=(($364)|0);
-      var $366=HEAPU16[(($365)>>1)];
+      var $366=HEAP[$365];
       var $367=(($366)&65535);
       var $368=(($359+$367)|0);
       var $369=(($368) & 65535);
@@ -17988,7 +17855,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $378=(($377+24)|0);
       var $379=$378;
       var $380=(($379)|0);
-      var $381=HEAP16[(($380)>>1)];
+      var $381=HEAP[$380];
       $ofs=$381;
       __label__ = 60; break;
     case 51: 
@@ -18003,7 +17870,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $390=(($389+28)|0);
       var $391=$390;
       var $392=(($391)|0);
-      var $393=HEAP16[(($392)>>1)];
+      var $393=HEAP[$392];
       $ofs=$393;
       __label__ = 59; break;
     case 53: 
@@ -18018,7 +17885,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $402=(($401+20)|0);
       var $403=$402;
       var $404=(($403)|0);
-      var $405=HEAP16[(($404)>>1)];
+      var $405=HEAP[$404];
       $ofs=$405;
       __label__ = 58; break;
     case 55: 
@@ -18033,7 +17900,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $414=(($413+12)|0);
       var $415=$414;
       var $416=(($415)|0);
-      var $417=HEAP16[(($416)>>1)];
+      var $417=HEAP[$416];
       $ofs=$417;
       __label__ = 57; break;
     case 57: 
@@ -18123,13 +17990,13 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $482=(($481+($478<<2))|0);
       var $483=$482;
       var $484=(($483)|0);
-      var $485=HEAP16[(($484)>>1)];
-      HEAP16[(($tmp2)>>1)]=$485;
+      var $485=HEAP[$484];
+      HEAP[$tmp2]=$485;
       var $486=$1;
       var $487=$lo;
       var $488=$tmp2;
       var $489=_softx86_write($486, 0, $487, $488, 2);
-      var $490=HEAP16[(($mem)>>1)];
+      var $490=HEAP[$mem];
       var $491=$5;
       var $492=(($491)&255);
       var $493=$1;
@@ -18138,7 +18005,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $496=(($495+($492<<2))|0);
       var $497=$496;
       var $498=(($497)|0);
-      HEAP16[(($498)>>1)]=$490;
+      HEAP[$498]=$490;
       __label__ = 73; break;
     case 72: 
       var $500=$seg;
@@ -18156,20 +18023,20 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
       var $511=$1;
       var $512=(($511+204)|0);
       var $513=(($512+($510<<2))|0);
-      var $514=HEAP32[(($513)>>2)];
-      var $515=HEAP8[($514)];
-      HEAP8[($tmp3)]=$515;
+      var $514=HEAP[$513];
+      var $515=HEAP[$514];
+      HEAP[$tmp3]=$515;
       var $516=$1;
       var $517=$lo;
       var $518=_softx86_write($516, 0, $517, $tmp3, 1);
-      var $519=HEAP8[($mem4)];
+      var $519=HEAP[$mem4];
       var $520=$5;
       var $521=(($520)&255);
       var $522=$1;
       var $523=(($522+204)|0);
       var $524=(($523+($521<<2))|0);
-      var $525=HEAP32[(($524)>>2)];
-      HEAP8[($525)]=$519;
+      var $525=HEAP[$524];
+      HEAP[$525]=$519;
       __label__ = 73; break;
     case 73: 
       __label__ = 74; break;
@@ -18182,7 +18049,7 @@ function _sx86_exec_full_modregrm_xchg($ctx, $w16, $d32, $mod, $reg, $rm) {
 _sx86_exec_full_modregrm_xchg["X"]=1;
 
 function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
-  var __stackBase__  = STACKTOP; STACKTOP += 16; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 16; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -18217,7 +18084,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
     case 5: 
       var $15=$1;
       var $16=(($15+236)|0);
-      var $17=HEAP8[($16)];
+      var $17=HEAP[$16];
       var $18=(($17 << 24) >> 24)!=0;
       if ($18) { __label__ = 14; break; } else { __label__ = 6; break; }
     case 6: 
@@ -18251,7 +18118,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $42=(($41+32)|0);
       var $43=(($42+16)|0);
       var $44=(($43)|0);
-      var $45=HEAP16[(($44)>>1)];
+      var $45=HEAP[$44];
       $seg=$45;
       __label__ = 13; break;
     case 12: 
@@ -18260,7 +18127,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $49=(($48+32)|0);
       var $50=(($49+24)|0);
       var $51=(($50)|0);
-      var $52=HEAP16[(($51)>>1)];
+      var $52=HEAP[$51];
       $seg=$52;
       __label__ = 13; break;
     case 13: 
@@ -18268,7 +18135,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
     case 14: 
       var $55=$1;
       var $56=(($55+238)|0);
-      var $57=HEAP16[(($56)>>1)];
+      var $57=HEAP[$56];
       $seg=$57;
       __label__ = 15; break;
     case 15: 
@@ -18308,7 +18175,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $86=(($85+12)|0);
       var $87=$86;
       var $88=(($87)|0);
-      var $89=HEAPU16[(($88)>>1)];
+      var $89=HEAP[$88];
       var $90=(($89)&65535);
       var $91=$1;
       var $92=(($91+4)|0);
@@ -18316,7 +18183,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $94=(($93+24)|0);
       var $95=$94;
       var $96=(($95)|0);
-      var $97=HEAPU16[(($96)>>1)];
+      var $97=HEAP[$96];
       var $98=(($97)&65535);
       var $99=(($90+$98)|0);
       var $100=(($99) & 65535);
@@ -18334,7 +18201,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $109=(($108+12)|0);
       var $110=$109;
       var $111=(($110)|0);
-      var $112=HEAPU16[(($111)>>1)];
+      var $112=HEAP[$111];
       var $113=(($112)&65535);
       var $114=$1;
       var $115=(($114+4)|0);
@@ -18342,7 +18209,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $117=(($116+28)|0);
       var $118=$117;
       var $119=(($118)|0);
-      var $120=HEAPU16[(($119)>>1)];
+      var $120=HEAP[$119];
       var $121=(($120)&65535);
       var $122=(($113+$121)|0);
       var $123=(($122) & 65535);
@@ -18360,7 +18227,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $132=(($131+20)|0);
       var $133=$132;
       var $134=(($133)|0);
-      var $135=HEAPU16[(($134)>>1)];
+      var $135=HEAP[$134];
       var $136=(($135)&65535);
       var $137=$1;
       var $138=(($137+4)|0);
@@ -18368,7 +18235,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $140=(($139+24)|0);
       var $141=$140;
       var $142=(($141)|0);
-      var $143=HEAPU16[(($142)>>1)];
+      var $143=HEAP[$142];
       var $144=(($143)&65535);
       var $145=(($136+$144)|0);
       var $146=(($145) & 65535);
@@ -18386,7 +18253,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $155=(($154+20)|0);
       var $156=$155;
       var $157=(($156)|0);
-      var $158=HEAPU16[(($157)>>1)];
+      var $158=HEAP[$157];
       var $159=(($158)&65535);
       var $160=$1;
       var $161=(($160+4)|0);
@@ -18394,7 +18261,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $163=(($162+28)|0);
       var $164=$163;
       var $165=(($164)|0);
-      var $166=HEAPU16[(($165)>>1)];
+      var $166=HEAP[$165];
       var $167=(($166)&65535);
       var $168=(($159+$167)|0);
       var $169=(($168) & 65535);
@@ -18412,7 +18279,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $178=(($177+24)|0);
       var $179=$178;
       var $180=(($179)|0);
-      var $181=HEAP16[(($180)>>1)];
+      var $181=HEAP[$180];
       $ofs=$181;
       __label__ = 34; break;
     case 28: 
@@ -18427,7 +18294,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $190=(($189+28)|0);
       var $191=$190;
       var $192=(($191)|0);
-      var $193=HEAP16[(($192)>>1)];
+      var $193=HEAP[$192];
       $ofs=$193;
       __label__ = 33; break;
     case 30: 
@@ -18442,7 +18309,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $202=(($201+12)|0);
       var $203=$202;
       var $204=(($203)|0);
-      var $205=HEAP16[(($204)>>1)];
+      var $205=HEAP[$204];
       $ofs=$205;
       __label__ = 32; break;
     case 32: 
@@ -18473,7 +18340,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $222=(($221+12)|0);
       var $223=$222;
       var $224=(($223)|0);
-      var $225=HEAPU16[(($224)>>1)];
+      var $225=HEAP[$224];
       var $226=(($225)&65535);
       var $227=$1;
       var $228=(($227+4)|0);
@@ -18481,7 +18348,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $230=(($229+24)|0);
       var $231=$230;
       var $232=(($231)|0);
-      var $233=HEAPU16[(($232)>>1)];
+      var $233=HEAP[$232];
       var $234=(($233)&65535);
       var $235=(($226+$234)|0);
       var $236=(($235) & 65535);
@@ -18499,7 +18366,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $245=(($244+12)|0);
       var $246=$245;
       var $247=(($246)|0);
-      var $248=HEAPU16[(($247)>>1)];
+      var $248=HEAP[$247];
       var $249=(($248)&65535);
       var $250=$1;
       var $251=(($250+4)|0);
@@ -18507,7 +18374,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $253=(($252+28)|0);
       var $254=$253;
       var $255=(($254)|0);
-      var $256=HEAPU16[(($255)>>1)];
+      var $256=HEAP[$255];
       var $257=(($256)&65535);
       var $258=(($249+$257)|0);
       var $259=(($258) & 65535);
@@ -18525,7 +18392,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $268=(($267+20)|0);
       var $269=$268;
       var $270=(($269)|0);
-      var $271=HEAPU16[(($270)>>1)];
+      var $271=HEAP[$270];
       var $272=(($271)&65535);
       var $273=$1;
       var $274=(($273+4)|0);
@@ -18533,7 +18400,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $276=(($275+24)|0);
       var $277=$276;
       var $278=(($277)|0);
-      var $279=HEAPU16[(($278)>>1)];
+      var $279=HEAP[$278];
       var $280=(($279)&65535);
       var $281=(($272+$280)|0);
       var $282=(($281) & 65535);
@@ -18551,7 +18418,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $291=(($290+20)|0);
       var $292=$291;
       var $293=(($292)|0);
-      var $294=HEAPU16[(($293)>>1)];
+      var $294=HEAP[$293];
       var $295=(($294)&65535);
       var $296=$1;
       var $297=(($296+4)|0);
@@ -18559,7 +18426,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $299=(($298+28)|0);
       var $300=$299;
       var $301=(($300)|0);
-      var $302=HEAPU16[(($301)>>1)];
+      var $302=HEAP[$301];
       var $303=(($302)&65535);
       var $304=(($295+$303)|0);
       var $305=(($304) & 65535);
@@ -18577,7 +18444,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $314=(($313+24)|0);
       var $315=$314;
       var $316=(($315)|0);
-      var $317=HEAP16[(($316)>>1)];
+      var $317=HEAP[$316];
       $ofs=$317;
       __label__ = 59; break;
     case 50: 
@@ -18592,7 +18459,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $326=(($325+28)|0);
       var $327=$326;
       var $328=(($327)|0);
-      var $329=HEAP16[(($328)>>1)];
+      var $329=HEAP[$328];
       $ofs=$329;
       __label__ = 58; break;
     case 52: 
@@ -18607,7 +18474,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $338=(($337+20)|0);
       var $339=$338;
       var $340=(($339)|0);
-      var $341=HEAP16[(($340)>>1)];
+      var $341=HEAP[$340];
       $ofs=$341;
       __label__ = 57; break;
     case 54: 
@@ -18622,7 +18489,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
       var $350=(($349+12)|0);
       var $351=$350;
       var $352=(($351)|0);
-      var $353=HEAP16[(($352)>>1)];
+      var $353=HEAP[$352];
       $ofs=$353;
       __label__ = 56; break;
     case 56: 
@@ -18716,7 +18583,7 @@ function _sx86_exec_full_modrmonly_memx($ctx, $mod, $rm, $sz, $op64) {
 _sx86_exec_full_modrmonly_memx["X"]=1;
 
 function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
-  var __stackBase__  = STACKTOP; STACKTOP += 4; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 2; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -18758,7 +18625,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $20=(($19+32)|0);
       var $21=(($20+($17<<3))|0);
       var $22=(($21)|0);
-      var $23=HEAP16[(($22)>>1)];
+      var $23=HEAP[$22];
       $regv=$23;
       var $24=$4;
       var $25=(($24)&255);
@@ -18768,8 +18635,8 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $29=(($28+($25<<2))|0);
       var $30=$29;
       var $31=(($30)|0);
-      var $32=HEAP16[(($31)>>1)];
-      HEAP16[(($rmv)>>1)]=$32;
+      var $32=HEAP[$31];
+      HEAP[$rmv]=$32;
       var $33=$5;
       var $34=(($33 << 24) >> 24)!=0;
       if ($34) { __label__ = 5; break; } else { __label__ = 6; break; }
@@ -18777,14 +18644,14 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $36=$1;
       var $37=$3;
       var $38=(($37)&255);
-      var $39=HEAPU16[(($rmv)>>1)];
+      var $39=HEAP[$rmv];
       var $40=(($39)&65535);
       var $41=_softx86_setsegval($36, $38, $40);
       __label__ = 7; break;
     case 6: 
       var $43=$6;
       var $44=$1;
-      var $45=HEAP16[(($rmv)>>1)];
+      var $45=HEAP[$rmv];
       var $46=$regv;
       var $47=FUNCTION_TABLE[$43]($44, $45, $46);
       var $48=$4;
@@ -18795,14 +18662,14 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $53=(($52+($49<<2))|0);
       var $54=$53;
       var $55=(($54)|0);
-      HEAP16[(($55)>>1)]=$47;
+      HEAP[$55]=$47;
       __label__ = 7; break;
     case 7: 
       __label__ = 76; break;
     case 8: 
       var $58=$1;
       var $59=(($58+236)|0);
-      var $60=HEAP8[($59)];
+      var $60=HEAP[$59];
       var $61=(($60 << 24) >> 24)!=0;
       if ($61) { __label__ = 17; break; } else { __label__ = 9; break; }
     case 9: 
@@ -18836,7 +18703,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $85=(($84+32)|0);
       var $86=(($85+16)|0);
       var $87=(($86)|0);
-      var $88=HEAP16[(($87)>>1)];
+      var $88=HEAP[$87];
       $seg=$88;
       __label__ = 16; break;
     case 15: 
@@ -18845,7 +18712,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $92=(($91+32)|0);
       var $93=(($92+24)|0);
       var $94=(($93)|0);
-      var $95=HEAP16[(($94)>>1)];
+      var $95=HEAP[$94];
       $seg=$95;
       __label__ = 16; break;
     case 16: 
@@ -18853,7 +18720,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
     case 17: 
       var $98=$1;
       var $99=(($98+238)|0);
-      var $100=HEAP16[(($99)>>1)];
+      var $100=HEAP[$99];
       $seg=$100;
       __label__ = 18; break;
     case 18: 
@@ -18893,7 +18760,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $129=(($128+12)|0);
       var $130=$129;
       var $131=(($130)|0);
-      var $132=HEAPU16[(($131)>>1)];
+      var $132=HEAP[$131];
       var $133=(($132)&65535);
       var $134=$1;
       var $135=(($134+4)|0);
@@ -18901,7 +18768,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $137=(($136+24)|0);
       var $138=$137;
       var $139=(($138)|0);
-      var $140=HEAPU16[(($139)>>1)];
+      var $140=HEAP[$139];
       var $141=(($140)&65535);
       var $142=(($133+$141)|0);
       var $143=(($142) & 65535);
@@ -18919,7 +18786,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $152=(($151+12)|0);
       var $153=$152;
       var $154=(($153)|0);
-      var $155=HEAPU16[(($154)>>1)];
+      var $155=HEAP[$154];
       var $156=(($155)&65535);
       var $157=$1;
       var $158=(($157+4)|0);
@@ -18927,7 +18794,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $160=(($159+28)|0);
       var $161=$160;
       var $162=(($161)|0);
-      var $163=HEAPU16[(($162)>>1)];
+      var $163=HEAP[$162];
       var $164=(($163)&65535);
       var $165=(($156+$164)|0);
       var $166=(($165) & 65535);
@@ -18945,7 +18812,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $175=(($174+20)|0);
       var $176=$175;
       var $177=(($176)|0);
-      var $178=HEAPU16[(($177)>>1)];
+      var $178=HEAP[$177];
       var $179=(($178)&65535);
       var $180=$1;
       var $181=(($180+4)|0);
@@ -18953,7 +18820,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $183=(($182+24)|0);
       var $184=$183;
       var $185=(($184)|0);
-      var $186=HEAPU16[(($185)>>1)];
+      var $186=HEAP[$185];
       var $187=(($186)&65535);
       var $188=(($179+$187)|0);
       var $189=(($188) & 65535);
@@ -18971,7 +18838,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $198=(($197+20)|0);
       var $199=$198;
       var $200=(($199)|0);
-      var $201=HEAPU16[(($200)>>1)];
+      var $201=HEAP[$200];
       var $202=(($201)&65535);
       var $203=$1;
       var $204=(($203+4)|0);
@@ -18979,7 +18846,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $206=(($205+28)|0);
       var $207=$206;
       var $208=(($207)|0);
-      var $209=HEAPU16[(($208)>>1)];
+      var $209=HEAP[$208];
       var $210=(($209)&65535);
       var $211=(($202+$210)|0);
       var $212=(($211) & 65535);
@@ -18997,7 +18864,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $221=(($220+24)|0);
       var $222=$221;
       var $223=(($222)|0);
-      var $224=HEAP16[(($223)>>1)];
+      var $224=HEAP[$223];
       $ofs=$224;
       __label__ = 37; break;
     case 31: 
@@ -19012,7 +18879,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $233=(($232+28)|0);
       var $234=$233;
       var $235=(($234)|0);
-      var $236=HEAP16[(($235)>>1)];
+      var $236=HEAP[$235];
       $ofs=$236;
       __label__ = 36; break;
     case 33: 
@@ -19027,7 +18894,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $245=(($244+12)|0);
       var $246=$245;
       var $247=(($246)|0);
-      var $248=HEAP16[(($247)>>1)];
+      var $248=HEAP[$247];
       $ofs=$248;
       __label__ = 35; break;
     case 35: 
@@ -19058,7 +18925,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $265=(($264+12)|0);
       var $266=$265;
       var $267=(($266)|0);
-      var $268=HEAPU16[(($267)>>1)];
+      var $268=HEAP[$267];
       var $269=(($268)&65535);
       var $270=$1;
       var $271=(($270+4)|0);
@@ -19066,7 +18933,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $273=(($272+24)|0);
       var $274=$273;
       var $275=(($274)|0);
-      var $276=HEAPU16[(($275)>>1)];
+      var $276=HEAP[$275];
       var $277=(($276)&65535);
       var $278=(($269+$277)|0);
       var $279=(($278) & 65535);
@@ -19084,7 +18951,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $288=(($287+12)|0);
       var $289=$288;
       var $290=(($289)|0);
-      var $291=HEAPU16[(($290)>>1)];
+      var $291=HEAP[$290];
       var $292=(($291)&65535);
       var $293=$1;
       var $294=(($293+4)|0);
@@ -19092,7 +18959,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $296=(($295+28)|0);
       var $297=$296;
       var $298=(($297)|0);
-      var $299=HEAPU16[(($298)>>1)];
+      var $299=HEAP[$298];
       var $300=(($299)&65535);
       var $301=(($292+$300)|0);
       var $302=(($301) & 65535);
@@ -19110,7 +18977,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $311=(($310+20)|0);
       var $312=$311;
       var $313=(($312)|0);
-      var $314=HEAPU16[(($313)>>1)];
+      var $314=HEAP[$313];
       var $315=(($314)&65535);
       var $316=$1;
       var $317=(($316+4)|0);
@@ -19118,7 +18985,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $319=(($318+24)|0);
       var $320=$319;
       var $321=(($320)|0);
-      var $322=HEAPU16[(($321)>>1)];
+      var $322=HEAP[$321];
       var $323=(($322)&65535);
       var $324=(($315+$323)|0);
       var $325=(($324) & 65535);
@@ -19136,7 +19003,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $334=(($333+20)|0);
       var $335=$334;
       var $336=(($335)|0);
-      var $337=HEAPU16[(($336)>>1)];
+      var $337=HEAP[$336];
       var $338=(($337)&65535);
       var $339=$1;
       var $340=(($339+4)|0);
@@ -19144,7 +19011,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $342=(($341+28)|0);
       var $343=$342;
       var $344=(($343)|0);
-      var $345=HEAPU16[(($344)>>1)];
+      var $345=HEAP[$344];
       var $346=(($345)&65535);
       var $347=(($338+$346)|0);
       var $348=(($347) & 65535);
@@ -19162,7 +19029,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $357=(($356+24)|0);
       var $358=$357;
       var $359=(($358)|0);
-      var $360=HEAP16[(($359)>>1)];
+      var $360=HEAP[$359];
       $ofs=$360;
       __label__ = 62; break;
     case 53: 
@@ -19177,7 +19044,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $369=(($368+28)|0);
       var $370=$369;
       var $371=(($370)|0);
-      var $372=HEAP16[(($371)>>1)];
+      var $372=HEAP[$371];
       $ofs=$372;
       __label__ = 61; break;
     case 55: 
@@ -19192,7 +19059,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $381=(($380+20)|0);
       var $382=$381;
       var $383=(($382)|0);
-      var $384=HEAP16[(($383)>>1)];
+      var $384=HEAP[$383];
       $ofs=$384;
       __label__ = 60; break;
     case 57: 
@@ -19207,7 +19074,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $393=(($392+12)|0);
       var $394=$393;
       var $395=(($394)|0);
-      var $396=HEAP16[(($395)>>1)];
+      var $396=HEAP[$395];
       $ofs=$396;
       __label__ = 59; break;
     case 59: 
@@ -19281,7 +19148,7 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $447=(($446+32)|0);
       var $448=(($447+($444<<3))|0);
       var $449=(($448)|0);
-      var $450=HEAP16[(($449)>>1)];
+      var $450=HEAP[$449];
       $regv=$450;
       var $451=$seg;
       var $452=(($451)&65535);
@@ -19301,17 +19168,17 @@ function _sx86_exec_full_modsregrm_rw($ctx, $mod, $reg, $rm, $opswap, $op16) {
       var $464=$1;
       var $465=$3;
       var $466=(($465)&255);
-      var $467=HEAPU16[(($rmv)>>1)];
+      var $467=HEAP[$rmv];
       var $468=(($467)&65535);
       var $469=_softx86_setsegval($464, $466, $468);
       __label__ = 75; break;
     case 74: 
       var $471=$6;
       var $472=$1;
-      var $473=HEAP16[(($rmv)>>1)];
+      var $473=HEAP[$rmv];
       var $474=$regv;
       var $475=FUNCTION_TABLE[$471]($472, $473, $474);
-      HEAP16[(($rmv)>>1)]=$475;
+      HEAP[$rmv]=$475;
       var $476=$1;
       var $477=$lo;
       var $478=$rmv;
@@ -19362,16 +19229,16 @@ function _sx86_dec_full_modregrm($ctx, $is_word, $dat32, $mod, $reg, $rm, $op1, 
       var $16=$5;
       var $17=(($16)&255);
       var $18=((_sx86_regs32+($17<<2))|0);
-      var $19=HEAP32[(($18)>>2)];
-      var $20=_sprintf($15, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$19,tempInt));
+      var $19=HEAP[$18];
+      var $20=_sprintf($15, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$19,tempInt));
       __label__ = 5; break;
     case 4: 
       var $22=$8;
       var $23=$5;
       var $24=(($23)&255);
       var $25=((_sx86_regs16+($24<<2))|0);
-      var $26=HEAP32[(($25)>>2)];
-      var $27=_sprintf($22, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$26,tempInt));
+      var $26=HEAP[$25];
+      var $27=_sprintf($22, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$26,tempInt));
       __label__ = 5; break;
     case 5: 
       __label__ = 7; break;
@@ -19380,8 +19247,8 @@ function _sx86_dec_full_modregrm($ctx, $is_word, $dat32, $mod, $reg, $rm, $op1, 
       var $31=$5;
       var $32=(($31)&255);
       var $33=((_sx86_regs8+($32<<2))|0);
-      var $34=HEAP32[(($33)>>2)];
-      var $35=_sprintf($30, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$34,tempInt));
+      var $34=HEAP[$33];
+      var $35=_sprintf($30, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$34,tempInt));
       __label__ = 7; break;
     case 7: 
       var $37=$4;
@@ -19401,16 +19268,16 @@ function _sx86_dec_full_modregrm($ctx, $is_word, $dat32, $mod, $reg, $rm, $op1, 
       var $48=$6;
       var $49=(($48)&255);
       var $50=((_sx86_regs32+($49<<2))|0);
-      var $51=HEAP32[(($50)>>2)];
-      var $52=_sprintf($47, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$51,tempInt));
+      var $51=HEAP[$50];
+      var $52=_sprintf($47, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$51,tempInt));
       __label__ = 12; break;
     case 11: 
       var $54=$7;
       var $55=$6;
       var $56=(($55)&255);
       var $57=((_sx86_regs16+($56<<2))|0);
-      var $58=HEAP32[(($57)>>2)];
-      var $59=_sprintf($54, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$58,tempInt));
+      var $58=HEAP[$57];
+      var $59=_sprintf($54, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$58,tempInt));
       __label__ = 12; break;
     case 12: 
       __label__ = 14; break;
@@ -19419,8 +19286,8 @@ function _sx86_dec_full_modregrm($ctx, $is_word, $dat32, $mod, $reg, $rm, $op1, 
       var $63=$6;
       var $64=(($63)&255);
       var $65=((_sx86_regs8+($64<<2))|0);
-      var $66=HEAP32[(($65)>>2)];
-      var $67=_sprintf($62, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$66,tempInt));
+      var $66=HEAP[$65];
+      var $67=_sprintf($62, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$66,tempInt));
       __label__ = 14; break;
     case 14: 
       __label__ = 29; break;
@@ -19451,15 +19318,15 @@ function _sx86_dec_full_modregrm($ctx, $is_word, $dat32, $mod, $reg, $rm, $op1, 
       var $89=$7;
       var $90=$o;
       var $91=(($90)&65535);
-      var $92=_sprintf($89, ((STRING_TABLE.__str1124)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$91,tempInt));
+      var $92=_sprintf($89, ((STRING_TABLE.__str1124)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$91,tempInt));
       __label__ = 19; break;
     case 18: 
       var $94=$7;
       var $95=$6;
       var $96=(($95)&255);
       var $97=((_sx86_regsaddr16_16+($96<<2))|0);
-      var $98=HEAP32[(($97)>>2)];
-      var $99=_sprintf($94, ((STRING_TABLE.__str2125)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$98,tempInt));
+      var $98=HEAP[$97];
+      var $99=_sprintf($94, ((STRING_TABLE.__str2125)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$98,tempInt));
       __label__ = 19; break;
     case 19: 
       __label__ = 28; break;
@@ -19514,10 +19381,10 @@ function _sx86_dec_full_modregrm($ctx, $is_word, $dat32, $mod, $reg, $rm, $op1, 
       var $138=$6;
       var $139=(($138)&255);
       var $140=((_sx86_regsaddr16_16+($139<<2))|0);
-      var $141=HEAP32[(($140)>>2)];
+      var $141=HEAP[$140];
       var $142=$o;
       var $143=(($142)&65535);
-      var $144=_sprintf($137, ((STRING_TABLE.__str3126)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$141,HEAP32[((tempInt+4)>>2)]=$143,tempInt));
+      var $144=_sprintf($137, ((STRING_TABLE.__str3126)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$141,HEAP[tempInt+4]=$143,tempInt));
       __label__ = 28; break;
     case 28: 
       __label__ = 29; break;
@@ -19613,16 +19480,16 @@ function _sx86_dec_full_modrmonly($ctx, $is_word, $dat32, $mod, $rm, $op1) {
       var $18=$5;
       var $19=(($18)&255);
       var $20=((_sx86_regs32+($19<<2))|0);
-      var $21=HEAP32[(($20)>>2)];
-      var $22=_sprintf($17, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$21,tempInt));
+      var $21=HEAP[$20];
+      var $22=_sprintf($17, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$21,tempInt));
       __label__ = 6; break;
     case 5: 
       var $24=$6;
       var $25=$5;
       var $26=(($25)&255);
       var $27=((_sx86_regs16+($26<<2))|0);
-      var $28=HEAP32[(($27)>>2)];
-      var $29=_sprintf($24, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$28,tempInt));
+      var $28=HEAP[$27];
+      var $29=_sprintf($24, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$28,tempInt));
       __label__ = 6; break;
     case 6: 
       __label__ = 8; break;
@@ -19631,8 +19498,8 @@ function _sx86_dec_full_modrmonly($ctx, $is_word, $dat32, $mod, $rm, $op1) {
       var $33=$5;
       var $34=(($33)&255);
       var $35=((_sx86_regs8+($34<<2))|0);
-      var $36=HEAP32[(($35)>>2)];
-      var $37=_sprintf($32, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$36,tempInt));
+      var $36=HEAP[$35];
+      var $37=_sprintf($32, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$36,tempInt));
       __label__ = 8; break;
     case 8: 
       __label__ = 23; break;
@@ -19663,15 +19530,15 @@ function _sx86_dec_full_modrmonly($ctx, $is_word, $dat32, $mod, $rm, $op1) {
       var $59=$6;
       var $60=$o;
       var $61=(($60)&65535);
-      var $62=_sprintf($59, ((STRING_TABLE.__str1124)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$61,tempInt));
+      var $62=_sprintf($59, ((STRING_TABLE.__str1124)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$61,tempInt));
       __label__ = 13; break;
     case 12: 
       var $64=$6;
       var $65=$5;
       var $66=(($65)&255);
       var $67=((_sx86_regsaddr16_16+($66<<2))|0);
-      var $68=HEAP32[(($67)>>2)];
-      var $69=_sprintf($64, ((STRING_TABLE.__str2125)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$68,tempInt));
+      var $68=HEAP[$67];
+      var $69=_sprintf($64, ((STRING_TABLE.__str2125)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$68,tempInt));
       __label__ = 13; break;
     case 13: 
       __label__ = 22; break;
@@ -19726,10 +19593,10 @@ function _sx86_dec_full_modrmonly($ctx, $is_word, $dat32, $mod, $rm, $op1) {
       var $108=$5;
       var $109=(($108)&255);
       var $110=((_sx86_regsaddr16_16+($109<<2))|0);
-      var $111=HEAP32[(($110)>>2)];
+      var $111=HEAP[$110];
       var $112=$o;
       var $113=(($112)&65535);
-      var $114=_sprintf($107, ((STRING_TABLE.__str3126)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$111,HEAP32[((tempInt+4)>>2)]=$113,tempInt));
+      var $114=_sprintf($107, ((STRING_TABLE.__str3126)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$111,HEAP[tempInt+4]=$113,tempInt));
       __label__ = 22; break;
     case 22: 
       __label__ = 23; break;
@@ -19742,7 +19609,7 @@ function _sx86_dec_full_modrmonly($ctx, $is_word, $dat32, $mod, $rm, $op1) {
 _sx86_dec_full_modrmonly["X"]=1;
 
 function _sx86_dec_full_modsregrm($ctx, $mod, $reg, $rm, $op1, $op2) {
-  var __stackBase__  = STACKTOP; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -19764,8 +19631,8 @@ function _sx86_dec_full_modsregrm($ctx, $mod, $reg, $rm, $op1, $op2) {
       var $8=$3;
       var $9=(($8)&255);
       var $10=((_sx86_segregs+($9<<2))|0);
-      var $11=HEAP32[(($10)>>2)];
-      var $12=_sprintf($7, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$11,tempInt));
+      var $11=HEAP[$10];
+      var $12=_sprintf($7, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$11,tempInt));
       var $13=$2;
       var $14=(($13)&255);
       var $15=(($14)|0)==3;
@@ -19775,8 +19642,8 @@ function _sx86_dec_full_modsregrm($ctx, $mod, $reg, $rm, $op1, $op2) {
       var $18=$4;
       var $19=(($18)&255);
       var $20=((_sx86_regs16+($19<<2))|0);
-      var $21=HEAP32[(($20)>>2)];
-      var $22=_sprintf($17, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$21,tempInt));
+      var $21=HEAP[$20];
+      var $22=_sprintf($17, ((STRING_TABLE.__str123)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$21,tempInt));
       __label__ = 17; break;
     case 3: 
       var $24=$2;
@@ -19805,15 +19672,15 @@ function _sx86_dec_full_modsregrm($ctx, $mod, $reg, $rm, $op1, $op2) {
       var $43=$5;
       var $44=$o;
       var $45=(($44)&65535);
-      var $46=_sprintf($43, ((STRING_TABLE.__str1124)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$45,tempInt));
+      var $46=_sprintf($43, ((STRING_TABLE.__str1124)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$45,tempInt));
       __label__ = 7; break;
     case 6: 
       var $48=$5;
       var $49=$4;
       var $50=(($49)&255);
       var $51=((_sx86_regsaddr16_16+($50<<2))|0);
-      var $52=HEAP32[(($51)>>2)];
-      var $53=_sprintf($48, ((STRING_TABLE.__str2125)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$52,tempInt));
+      var $52=HEAP[$51];
+      var $53=_sprintf($48, ((STRING_TABLE.__str2125)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$52,tempInt));
       __label__ = 7; break;
     case 7: 
       __label__ = 16; break;
@@ -19868,10 +19735,10 @@ function _sx86_dec_full_modsregrm($ctx, $mod, $reg, $rm, $op1, $op2) {
       var $92=$4;
       var $93=(($92)&255);
       var $94=((_sx86_regsaddr16_16+($93<<2))|0);
-      var $95=HEAP32[(($94)>>2)];
+      var $95=HEAP[$94];
       var $96=$o;
       var $97=(($96)&65535);
-      var $98=_sprintf($91, ((STRING_TABLE.__str3126)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$95,HEAP32[((tempInt+4)>>2)]=$97,tempInt));
+      var $98=_sprintf($91, ((STRING_TABLE.__str3126)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$95,HEAP[tempInt+4]=$97,tempInt));
       __label__ = 16; break;
     case 16: 
       __label__ = 17; break;
@@ -19884,7 +19751,7 @@ function _sx86_dec_full_modsregrm($ctx, $mod, $reg, $rm, $op1, $op2) {
 _sx86_dec_full_modsregrm["X"]=1;
 
 function _Sfx86OpcodeExec_mov($opcode, $ctx) {
-  var __stackBase__  = STACKTOP; STACKTOP += 16; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 6; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -19907,17 +19774,17 @@ function _Sfx86OpcodeExec_mov($opcode, $ctx) {
       var $rm5;
       var $o;
       var $mem=__stackBase__;
-      var $mem6=__stackBase__+4;
+      var $mem6=__stackBase__+2;
       var $o7;
-      var $mem8=__stackBase__+8;
-      var $mem9=__stackBase__+12;
+      var $mem8=__stackBase__+3;
+      var $mem9=__stackBase__+5;
       var $b;
       var $w;
       $2=$opcode;
       $3=$ctx;
       var $4=$3;
       var $5=(($4+236)|0);
-      var $6=HEAP8[($5)];
+      var $6=HEAP[$5];
       var $7=(($6 << 24) >> 24)!=0;
       if ($7) { __label__ = 3; break; } else { __label__ = 2; break; }
     case 2: 
@@ -19926,13 +19793,13 @@ function _Sfx86OpcodeExec_mov($opcode, $ctx) {
       var $11=(($10+32)|0);
       var $12=(($11+24)|0);
       var $13=(($12)|0);
-      var $14=HEAP16[(($13)>>1)];
+      var $14=HEAP[$13];
       $seg=$14;
       __label__ = 4; break;
     case 3: 
       var $16=$3;
       var $17=(($16+238)|0);
-      var $18=HEAP16[(($17)>>1)];
+      var $18=HEAP[$17];
       $seg=$18;
       __label__ = 4; break;
     case 4: 
@@ -20062,27 +19929,27 @@ function _Sfx86OpcodeExec_mov($opcode, $ctx) {
       var $118=$lo;
       var $119=$mem;
       var $120=_softx86_fetch($117, 0, $118, $119, 2);
-      var $121=HEAP16[(($mem)>>1)];
+      var $121=HEAP[$mem];
       var $122=$3;
       var $123=(($122+4)|0);
       var $124=(($123)|0);
       var $125=(($124)|0);
       var $126=$125;
       var $127=(($126)|0);
-      HEAP16[(($127)>>1)]=$121;
+      HEAP[$127]=$121;
       __label__ = 13; break;
     case 12: 
       var $129=$3;
       var $130=$lo;
       var $131=_softx86_fetch($129, 0, $130, $mem6, 1);
-      var $132=HEAP8[($mem6)];
+      var $132=HEAP[$mem6];
       var $133=$3;
       var $134=(($133+4)|0);
       var $135=(($134)|0);
       var $136=(($135)|0);
       var $137=$136;
       var $138=(($137)|0);
-      HEAP8[($138)]=$132;
+      HEAP[$138]=$132;
       __label__ = 13; break;
     case 13: 
       $1=1;
@@ -20126,8 +19993,8 @@ function _Sfx86OpcodeExec_mov($opcode, $ctx) {
       var $171=(($170)|0);
       var $172=$171;
       var $173=(($172)|0);
-      var $174=HEAP16[(($173)>>1)];
-      HEAP16[(($mem8)>>1)]=$174;
+      var $174=HEAP[$173];
+      HEAP[$mem8]=$174;
       var $175=$3;
       var $176=$lo;
       var $177=$mem8;
@@ -20140,8 +20007,8 @@ function _Sfx86OpcodeExec_mov($opcode, $ctx) {
       var $183=(($182)|0);
       var $184=$183;
       var $185=(($184)|0);
-      var $186=HEAP8[($185)];
-      HEAP8[($mem9)]=$186;
+      var $186=HEAP[$185];
+      HEAP[$mem9]=$186;
       var $187=$3;
       var $188=$lo;
       var $189=_softx86_write($187, 0, $188, $mem9, 1);
@@ -20166,8 +20033,8 @@ function _Sfx86OpcodeExec_mov($opcode, $ctx) {
       var $203=$3;
       var $204=(($203+204)|0);
       var $205=(($204+($202<<2))|0);
-      var $206=HEAP32[(($205)>>2)];
-      HEAP8[($206)]=$199;
+      var $206=HEAP[$205];
+      HEAP[$206]=$199;
       $1=1;
       __label__ = 29; break;
     case 21: 
@@ -20200,7 +20067,7 @@ function _Sfx86OpcodeExec_mov($opcode, $ctx) {
       var $231=(($230+($227<<2))|0);
       var $232=$231;
       var $233=(($232)|0);
-      HEAP16[(($233)>>1)]=$224;
+      HEAP[$233]=$224;
       $1=1;
       __label__ = 29; break;
     case 23: 
@@ -20300,11 +20167,11 @@ function _Sfx86OpcodeDec_mov($opcode, $ctx, $buf) {
       if ($40) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
       var $42=$4;
-      var $43=_sprintf($42, ((STRING_TABLE.__str155)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op2_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op1_tmp)|0),tempInt));
+      var $43=_sprintf($42, ((STRING_TABLE.__str155)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op2_tmp)|0),HEAP[tempInt+4]=((_op1_tmp)|0),tempInt));
       __label__ = 5; break;
     case 4: 
       var $45=$4;
-      var $46=_sprintf($45, ((STRING_TABLE.__str155)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op2_tmp)|0),tempInt));
+      var $46=_sprintf($45, ((STRING_TABLE.__str155)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=((_op2_tmp)|0),tempInt));
       __label__ = 5; break;
     case 5: 
       $1=1;
@@ -20355,11 +20222,11 @@ function _Sfx86OpcodeDec_mov($opcode, $ctx, $buf) {
       if ($82) { __label__ = 9; break; } else { __label__ = 10; break; }
     case 9: 
       var $84=$4;
-      var $85=_sprintf($84, ((STRING_TABLE.__str155)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op2_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op1_tmp)|0),tempInt));
+      var $85=_sprintf($84, ((STRING_TABLE.__str155)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op2_tmp)|0),HEAP[tempInt+4]=((_op1_tmp)|0),tempInt));
       __label__ = 11; break;
     case 10: 
       var $87=$4;
-      var $88=_sprintf($87, ((STRING_TABLE.__str155)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op2_tmp)|0),tempInt));
+      var $88=_sprintf($87, ((STRING_TABLE.__str155)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=((_op2_tmp)|0),tempInt));
       __label__ = 11; break;
     case 11: 
       $1=1;
@@ -20391,7 +20258,7 @@ function _Sfx86OpcodeDec_mov($opcode, $ctx, $buf) {
       var $111=$110 ? (((STRING_TABLE.__str2157)|0)) : (((STRING_TABLE.__str3158)|0));
       var $112=$o;
       var $113=(($112)&65535);
-      var $114=_sprintf($107, ((STRING_TABLE.__str1156)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$111,HEAP32[((tempInt+4)>>2)]=$113,tempInt));
+      var $114=_sprintf($107, ((STRING_TABLE.__str1156)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$111,HEAP[tempInt+4]=$113,tempInt));
       $1=1;
       __label__ = 26; break;
     case 14: 
@@ -20421,7 +20288,7 @@ function _Sfx86OpcodeDec_mov($opcode, $ctx, $buf) {
       var $136=(($135)&255);
       var $137=(($136)|0)==163;
       var $138=$137 ? (((STRING_TABLE.__str2157)|0)) : (((STRING_TABLE.__str3158)|0));
-      var $139=_sprintf($132, ((STRING_TABLE.__str4159)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$134,HEAP32[((tempInt+4)>>2)]=$138,tempInt));
+      var $139=_sprintf($132, ((STRING_TABLE.__str4159)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$134,HEAP[tempInt+4]=$138,tempInt));
       $1=1;
       __label__ = 26; break;
     case 16: 
@@ -20439,10 +20306,10 @@ function _Sfx86OpcodeDec_mov($opcode, $ctx, $buf) {
       var $150=(($149)&255);
       var $151=(($150-176)|0);
       var $152=((_sx86_regs8+($151<<2))|0);
-      var $153=HEAP32[(($152)>>2)];
+      var $153=HEAP[$152];
       var $154=$b;
       var $155=(($154)&255);
-      var $156=_sprintf($148, ((STRING_TABLE.__str5160)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$153,HEAP32[((tempInt+4)>>2)]=$155,tempInt));
+      var $156=_sprintf($148, ((STRING_TABLE.__str5160)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$153,HEAP[tempInt+4]=$155,tempInt));
       $1=1;
       __label__ = 26; break;
     case 18: 
@@ -20470,10 +20337,10 @@ function _Sfx86OpcodeDec_mov($opcode, $ctx, $buf) {
       var $176=(($175)&255);
       var $177=(($176-184)|0);
       var $178=((_sx86_regs16+($177<<2))|0);
-      var $179=HEAP32[(($178)>>2)];
+      var $179=HEAP[$178];
       var $180=$w;
       var $181=(($180)&65535);
-      var $182=_sprintf($174, ((STRING_TABLE.__str6161)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$179,HEAP32[((tempInt+4)>>2)]=$181,tempInt));
+      var $182=_sprintf($174, ((STRING_TABLE.__str6161)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$179,HEAP[tempInt+4]=$181,tempInt));
       $1=1;
       __label__ = 26; break;
     case 20: 
@@ -20499,7 +20366,7 @@ function _Sfx86OpcodeDec_mov($opcode, $ctx, $buf) {
 _Sfx86OpcodeDec_mov["X"]=1;
 
 function _Sfx86OpcodeExec_xlat($opcode, $ctx) {
-  var __stackBase__  = STACKTOP; STACKTOP += 4; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 1; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -20514,7 +20381,7 @@ function _Sfx86OpcodeExec_xlat($opcode, $ctx) {
       $3=$ctx;
       var $4=$3;
       var $5=(($4+236)|0);
-      var $6=HEAP8[($5)];
+      var $6=HEAP[$5];
       var $7=(($6 << 24) >> 24)!=0;
       if ($7) { __label__ = 3; break; } else { __label__ = 2; break; }
     case 2: 
@@ -20523,13 +20390,13 @@ function _Sfx86OpcodeExec_xlat($opcode, $ctx) {
       var $11=(($10+32)|0);
       var $12=(($11+24)|0);
       var $13=(($12)|0);
-      var $14=HEAP16[(($13)>>1)];
+      var $14=HEAP[$13];
       $seg=$14;
       __label__ = 4; break;
     case 3: 
       var $16=$3;
       var $17=(($16+238)|0);
-      var $18=HEAP16[(($17)>>1)];
+      var $18=HEAP[$17];
       $seg=$18;
       __label__ = 4; break;
     case 4: 
@@ -20545,7 +20412,7 @@ function _Sfx86OpcodeExec_xlat($opcode, $ctx) {
       var $28=(($27+12)|0);
       var $29=$28;
       var $30=(($29)|0);
-      var $31=HEAPU16[(($30)>>1)];
+      var $31=HEAP[$30];
       var $32=(($31)&65535);
       $ofs=$32;
       var $33=$3;
@@ -20554,7 +20421,7 @@ function _Sfx86OpcodeExec_xlat($opcode, $ctx) {
       var $36=(($35)|0);
       var $37=$36;
       var $38=(($37)|0);
-      var $39=HEAPU8[($38)];
+      var $39=HEAP[$38];
       var $40=(($39)&255);
       var $41=$ofs;
       var $42=(($41+$40)|0);
@@ -20571,14 +20438,14 @@ function _Sfx86OpcodeExec_xlat($opcode, $ctx) {
       var $50=$3;
       var $51=$ofs;
       var $52=_softx86_fetch($50, 0, $51, $d, 1);
-      var $53=HEAP8[($d)];
+      var $53=HEAP[$d];
       var $54=$3;
       var $55=(($54+4)|0);
       var $56=(($55)|0);
       var $57=(($56)|0);
       var $58=$57;
       var $59=(($58)|0);
-      HEAP8[($59)]=$53;
+      HEAP[$59]=$53;
       $1=1;
       __label__ = 7; break;
     case 6: 
@@ -20851,7 +20718,7 @@ function _Sfx86OpcodeDec_les($opcode, $ctx, $buf) {
       var $27=$rm;
       _sx86_dec_full_modregrm($24, 1, 0, $25, $26, $27, ((_op1_tmp)|0), ((_op2_tmp)|0));
       var $28=$4;
-      var $29=_sprintf($28, ((STRING_TABLE.__str8163)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op2_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op1_tmp)|0),tempInt));
+      var $29=_sprintf($28, ((STRING_TABLE.__str8163)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op2_tmp)|0),HEAP[tempInt+4]=((_op1_tmp)|0),tempInt));
       $1=1;
       __label__ = 6; break;
     case 3: 
@@ -20885,7 +20752,7 @@ function _Sfx86OpcodeDec_les($opcode, $ctx, $buf) {
       var $53=$rm4;
       _sx86_dec_full_modregrm($50, 1, 0, $51, $52, $53, ((_op1_tmp)|0), ((_op2_tmp)|0));
       var $54=$4;
-      var $55=_sprintf($54, ((STRING_TABLE.__str9164)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op2_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op1_tmp)|0),tempInt));
+      var $55=_sprintf($54, ((STRING_TABLE.__str9164)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op2_tmp)|0),HEAP[tempInt+4]=((_op1_tmp)|0),tempInt));
       $1=1;
       __label__ = 6; break;
     case 5: 
@@ -20901,7 +20768,7 @@ function _Sfx86OpcodeDec_les($opcode, $ctx, $buf) {
 _Sfx86OpcodeDec_les["X"]=1;
 
 function _Sfx86OpcodeExec_io($opcode, $ctx) {
-  var __stackBase__  = STACKTOP; STACKTOP += 32; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 12; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -20912,17 +20779,17 @@ function _Sfx86OpcodeExec_io($opcode, $ctx) {
       var $ionum;
       var $w16;
       var $rw=__stackBase__;
-      var $rb=__stackBase__+4;
+      var $rb=__stackBase__+2;
       var $w161;
-      var $rw2=__stackBase__+8;
-      var $rb3=__stackBase__+12;
+      var $rw2=__stackBase__+3;
+      var $rb3=__stackBase__+5;
       var $ionum4;
       var $w165;
-      var $rw6=__stackBase__+16;
-      var $rb7=__stackBase__+20;
+      var $rw6=__stackBase__+6;
+      var $rb7=__stackBase__+8;
       var $w168;
-      var $rw9=__stackBase__+24;
-      var $rb10=__stackBase__+28;
+      var $rw9=__stackBase__+9;
+      var $rb10=__stackBase__+11;
       $2=$opcode;
       $3=$ctx;
       var $4=$2;
@@ -20946,40 +20813,40 @@ function _Sfx86OpcodeExec_io($opcode, $ctx) {
       var $18=$3;
       var $19=(($18+128)|0);
       var $20=(($19+4)|0);
-      var $21=HEAP32[(($20)>>2)];
+      var $21=HEAP[$20];
       var $22=$3;
       var $23=$22;
       var $24=$ionum;
       var $25=(($24)&255);
       var $26=$rw;
       FUNCTION_TABLE[$21]($23, $25, $26, 2);
-      var $27=HEAP16[(($rw)>>1)];
+      var $27=HEAP[$rw];
       var $28=$3;
       var $29=(($28+4)|0);
       var $30=(($29)|0);
       var $31=(($30)|0);
       var $32=$31;
       var $33=(($32)|0);
-      HEAP16[(($33)>>1)]=$27;
+      HEAP[$33]=$27;
       __label__ = 5; break;
     case 4: 
       var $35=$3;
       var $36=(($35+128)|0);
       var $37=(($36+4)|0);
-      var $38=HEAP32[(($37)>>2)];
+      var $38=HEAP[$37];
       var $39=$3;
       var $40=$39;
       var $41=$ionum;
       var $42=(($41)&255);
       FUNCTION_TABLE[$38]($40, $42, $rb, 1);
-      var $43=HEAP8[($rb)];
+      var $43=HEAP[$rb];
       var $44=$3;
       var $45=(($44+4)|0);
       var $46=(($45)|0);
       var $47=(($46)|0);
       var $48=$47;
       var $49=(($48)|0);
-      HEAP8[($49)]=$43;
+      HEAP[$49]=$43;
       __label__ = 5; break;
     case 5: 
       $1=1;
@@ -21003,7 +20870,7 @@ function _Sfx86OpcodeExec_io($opcode, $ctx) {
       var $64=$3;
       var $65=(($64+128)|0);
       var $66=(($65+4)|0);
-      var $67=HEAP32[(($66)>>2)];
+      var $67=HEAP[$66];
       var $68=$3;
       var $69=$68;
       var $70=$3;
@@ -21012,24 +20879,24 @@ function _Sfx86OpcodeExec_io($opcode, $ctx) {
       var $73=(($72+8)|0);
       var $74=$73;
       var $75=(($74)|0);
-      var $76=HEAPU16[(($75)>>1)];
+      var $76=HEAP[$75];
       var $77=(($76)&65535);
       var $78=$rw2;
       FUNCTION_TABLE[$67]($69, $77, $78, 2);
-      var $79=HEAP16[(($rw2)>>1)];
+      var $79=HEAP[$rw2];
       var $80=$3;
       var $81=(($80+4)|0);
       var $82=(($81)|0);
       var $83=(($82)|0);
       var $84=$83;
       var $85=(($84)|0);
-      HEAP16[(($85)>>1)]=$79;
+      HEAP[$85]=$79;
       __label__ = 10; break;
     case 9: 
       var $87=$3;
       var $88=(($87+128)|0);
       var $89=(($88+4)|0);
-      var $90=HEAP32[(($89)>>2)];
+      var $90=HEAP[$89];
       var $91=$3;
       var $92=$91;
       var $93=$3;
@@ -21038,17 +20905,17 @@ function _Sfx86OpcodeExec_io($opcode, $ctx) {
       var $96=(($95+8)|0);
       var $97=$96;
       var $98=(($97)|0);
-      var $99=HEAPU16[(($98)>>1)];
+      var $99=HEAP[$98];
       var $100=(($99)&65535);
       FUNCTION_TABLE[$90]($92, $100, $rb3, 1);
-      var $101=HEAP8[($rb3)];
+      var $101=HEAP[$rb3];
       var $102=$3;
       var $103=(($102+4)|0);
       var $104=(($103)|0);
       var $105=(($104)|0);
       var $106=$105;
       var $107=(($106)|0);
-      HEAP8[($107)]=$101;
+      HEAP[$107]=$101;
       __label__ = 10; break;
     case 10: 
       $1=1;
@@ -21078,12 +20945,12 @@ function _Sfx86OpcodeExec_io($opcode, $ctx) {
       var $127=(($126)|0);
       var $128=$127;
       var $129=(($128)|0);
-      var $130=HEAP16[(($129)>>1)];
-      HEAP16[(($rw6)>>1)]=$130;
+      var $130=HEAP[$129];
+      HEAP[$rw6]=$130;
       var $131=$3;
       var $132=(($131+128)|0);
       var $133=(($132+12)|0);
-      var $134=HEAP32[(($133)>>2)];
+      var $134=HEAP[$133];
       var $135=$3;
       var $136=$135;
       var $137=$ionum4;
@@ -21098,12 +20965,12 @@ function _Sfx86OpcodeExec_io($opcode, $ctx) {
       var $144=(($143)|0);
       var $145=$144;
       var $146=(($145)|0);
-      var $147=HEAP8[($146)];
-      HEAP8[($rb7)]=$147;
+      var $147=HEAP[$146];
+      HEAP[$rb7]=$147;
       var $148=$3;
       var $149=(($148+128)|0);
       var $150=(($149+12)|0);
-      var $151=HEAP32[(($150)>>2)];
+      var $151=HEAP[$150];
       var $152=$3;
       var $153=$152;
       var $154=$ionum4;
@@ -21135,12 +21002,12 @@ function _Sfx86OpcodeExec_io($opcode, $ctx) {
       var $173=(($172)|0);
       var $174=$173;
       var $175=(($174)|0);
-      var $176=HEAP16[(($175)>>1)];
-      HEAP16[(($rw9)>>1)]=$176;
+      var $176=HEAP[$175];
+      HEAP[$rw9]=$176;
       var $177=$3;
       var $178=(($177+128)|0);
       var $179=(($178+12)|0);
-      var $180=HEAP32[(($179)>>2)];
+      var $180=HEAP[$179];
       var $181=$3;
       var $182=$181;
       var $183=$3;
@@ -21149,7 +21016,7 @@ function _Sfx86OpcodeExec_io($opcode, $ctx) {
       var $186=(($185+8)|0);
       var $187=$186;
       var $188=(($187)|0);
-      var $189=HEAPU16[(($188)>>1)];
+      var $189=HEAP[$188];
       var $190=(($189)&65535);
       var $191=$rw9;
       FUNCTION_TABLE[$180]($182, $190, $191, 2);
@@ -21161,12 +21028,12 @@ function _Sfx86OpcodeExec_io($opcode, $ctx) {
       var $196=(($195)|0);
       var $197=$196;
       var $198=(($197)|0);
-      var $199=HEAP8[($198)];
-      HEAP8[($rb10)]=$199;
+      var $199=HEAP[$198];
+      HEAP[$rb10]=$199;
       var $200=$3;
       var $201=(($200+128)|0);
       var $202=(($201+12)|0);
-      var $203=HEAP32[(($202)>>2)];
+      var $203=HEAP[$202];
       var $204=$3;
       var $205=$204;
       var $206=$3;
@@ -21175,7 +21042,7 @@ function _Sfx86OpcodeExec_io($opcode, $ctx) {
       var $209=(($208+8)|0);
       var $210=$209;
       var $211=(($210)|0);
-      var $212=HEAPU16[(($211)>>1)];
+      var $212=HEAP[$211];
       var $213=(($212)&65535);
       FUNCTION_TABLE[$203]($205, $213, $rb10, 1);
       __label__ = 20; break;
@@ -21240,7 +21107,7 @@ function _Sfx86OpcodeDec_io($opcode, $ctx, $buf) {
       var $20=$19 ? (((STRING_TABLE.__str1178)|0)) : (((STRING_TABLE.__str2179)|0));
       var $21=$ionum;
       var $22=(($21)&255);
-      var $23=_sprintf($16, ((STRING_TABLE.__str177)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$20,HEAP32[((tempInt+4)>>2)]=$22,tempInt));
+      var $23=_sprintf($16, ((STRING_TABLE.__str177)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$20,HEAP[tempInt+4]=$22,tempInt));
       $1=1;
       __label__ = 13; break;
     case 3: 
@@ -21260,7 +21127,7 @@ function _Sfx86OpcodeDec_io($opcode, $ctx, $buf) {
       var $36=(($35)&255);
       var $37=(($36)|0)!=0;
       var $38=$37 ? (((STRING_TABLE.__str1178)|0)) : (((STRING_TABLE.__str2179)|0));
-      var $39=_sprintf($34, ((STRING_TABLE.__str3180)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$38,tempInt));
+      var $39=_sprintf($34, ((STRING_TABLE.__str3180)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$38,tempInt));
       $1=1;
       __label__ = 13; break;
     case 5: 
@@ -21285,7 +21152,7 @@ function _Sfx86OpcodeDec_io($opcode, $ctx, $buf) {
       var $56=(($55)&255);
       var $57=(($56)|0)!=0;
       var $58=$57 ? (((STRING_TABLE.__str1178)|0)) : (((STRING_TABLE.__str2179)|0));
-      var $59=_sprintf($52, ((STRING_TABLE.__str4181)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$54,HEAP32[((tempInt+4)>>2)]=$58,tempInt));
+      var $59=_sprintf($52, ((STRING_TABLE.__str4181)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$54,HEAP[tempInt+4]=$58,tempInt));
       $1=1;
       __label__ = 13; break;
     case 7: 
@@ -21305,7 +21172,7 @@ function _Sfx86OpcodeDec_io($opcode, $ctx, $buf) {
       var $72=(($71)&255);
       var $73=(($72)|0)!=0;
       var $74=$73 ? (((STRING_TABLE.__str1178)|0)) : (((STRING_TABLE.__str2179)|0));
-      var $75=_sprintf($70, ((STRING_TABLE.__str5182)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$74,tempInt));
+      var $75=_sprintf($70, ((STRING_TABLE.__str5182)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$74,tempInt));
       $1=1;
       __label__ = 13; break;
     case 9: 
@@ -21352,18 +21219,18 @@ function _op_dec8($ctx, $src) {
       var $13=(($12+4)|0);
       var $14=(($13+96)|0);
       var $15=$14;
-      var $16=HEAP32[(($15)>>2)];
+      var $16=HEAP[$15];
       var $17=$16 | 128;
-      HEAP32[(($15)>>2)]=$17;
+      HEAP[$15]=$17;
       __label__ = 4; break;
     case 3: 
       var $19=$1;
       var $20=(($19+4)|0);
       var $21=(($20+96)|0);
       var $22=$21;
-      var $23=HEAP32[(($22)>>2)];
+      var $23=HEAP[$22];
       var $24=$23 & -129;
-      HEAP32[(($22)>>2)]=$24;
+      HEAP[$22]=$24;
       __label__ = 4; break;
     case 4: 
       var $26=$ret;
@@ -21374,18 +21241,18 @@ function _op_dec8($ctx, $src) {
       var $30=(($29+4)|0);
       var $31=(($30+96)|0);
       var $32=$31;
-      var $33=HEAP32[(($32)>>2)];
+      var $33=HEAP[$32];
       var $34=$33 | 64;
-      HEAP32[(($32)>>2)]=$34;
+      HEAP[$32]=$34;
       __label__ = 7; break;
     case 6: 
       var $36=$1;
       var $37=(($36+4)|0);
       var $38=(($37+96)|0);
       var $39=$38;
-      var $40=HEAP32[(($39)>>2)];
+      var $40=HEAP[$39];
       var $41=$40 & -65;
-      HEAP32[(($39)>>2)]=$41;
+      HEAP[$39]=$41;
       __label__ = 7; break;
     case 7: 
       var $43=$2;
@@ -21398,18 +21265,18 @@ function _op_dec8($ctx, $src) {
       var $49=(($48+4)|0);
       var $50=(($49+96)|0);
       var $51=$50;
-      var $52=HEAP32[(($51)>>2)];
+      var $52=HEAP[$51];
       var $53=$52 | 16;
-      HEAP32[(($51)>>2)]=$53;
+      HEAP[$51]=$53;
       __label__ = 10; break;
     case 9: 
       var $55=$1;
       var $56=(($55+4)|0);
       var $57=(($56+96)|0);
       var $58=$57;
-      var $59=HEAP32[(($58)>>2)];
+      var $59=HEAP[$58];
       var $60=$59 & -17;
-      HEAP32[(($58)>>2)]=$60;
+      HEAP[$58]=$60;
       __label__ = 10; break;
     case 10: 
       var $62=$ret;
@@ -21421,18 +21288,18 @@ function _op_dec8($ctx, $src) {
       var $67=(($66+4)|0);
       var $68=(($67+96)|0);
       var $69=$68;
-      var $70=HEAP32[(($69)>>2)];
+      var $70=HEAP[$69];
       var $71=$70 | 4;
-      HEAP32[(($69)>>2)]=$71;
+      HEAP[$69]=$71;
       __label__ = 13; break;
     case 12: 
       var $73=$1;
       var $74=(($73+4)|0);
       var $75=(($74+96)|0);
       var $76=$75;
-      var $77=HEAP32[(($76)>>2)];
+      var $77=HEAP[$76];
       var $78=$77 & -5;
-      HEAP32[(($76)>>2)]=$78;
+      HEAP[$76]=$78;
       __label__ = 13; break;
     case 13: 
       var $80=$ret;
@@ -21469,18 +21336,18 @@ function _op_dec16($ctx, $src) {
       var $13=(($12+4)|0);
       var $14=(($13+96)|0);
       var $15=$14;
-      var $16=HEAP32[(($15)>>2)];
+      var $16=HEAP[$15];
       var $17=$16 | 128;
-      HEAP32[(($15)>>2)]=$17;
+      HEAP[$15]=$17;
       __label__ = 4; break;
     case 3: 
       var $19=$1;
       var $20=(($19+4)|0);
       var $21=(($20+96)|0);
       var $22=$21;
-      var $23=HEAP32[(($22)>>2)];
+      var $23=HEAP[$22];
       var $24=$23 & -129;
-      HEAP32[(($22)>>2)]=$24;
+      HEAP[$22]=$24;
       __label__ = 4; break;
     case 4: 
       var $26=$ret;
@@ -21491,18 +21358,18 @@ function _op_dec16($ctx, $src) {
       var $30=(($29+4)|0);
       var $31=(($30+96)|0);
       var $32=$31;
-      var $33=HEAP32[(($32)>>2)];
+      var $33=HEAP[$32];
       var $34=$33 | 64;
-      HEAP32[(($32)>>2)]=$34;
+      HEAP[$32]=$34;
       __label__ = 7; break;
     case 6: 
       var $36=$1;
       var $37=(($36+4)|0);
       var $38=(($37+96)|0);
       var $39=$38;
-      var $40=HEAP32[(($39)>>2)];
+      var $40=HEAP[$39];
       var $41=$40 & -65;
-      HEAP32[(($39)>>2)]=$41;
+      HEAP[$39]=$41;
       __label__ = 7; break;
     case 7: 
       var $43=$2;
@@ -21515,18 +21382,18 @@ function _op_dec16($ctx, $src) {
       var $49=(($48+4)|0);
       var $50=(($49+96)|0);
       var $51=$50;
-      var $52=HEAP32[(($51)>>2)];
+      var $52=HEAP[$51];
       var $53=$52 | 16;
-      HEAP32[(($51)>>2)]=$53;
+      HEAP[$51]=$53;
       __label__ = 10; break;
     case 9: 
       var $55=$1;
       var $56=(($55+4)|0);
       var $57=(($56+96)|0);
       var $58=$57;
-      var $59=HEAP32[(($58)>>2)];
+      var $59=HEAP[$58];
       var $60=$59 & -17;
-      HEAP32[(($58)>>2)]=$60;
+      HEAP[$58]=$60;
       __label__ = 10; break;
     case 10: 
       var $62=$ret;
@@ -21538,18 +21405,18 @@ function _op_dec16($ctx, $src) {
       var $67=(($66+4)|0);
       var $68=(($67+96)|0);
       var $69=$68;
-      var $70=HEAP32[(($69)>>2)];
+      var $70=HEAP[$69];
       var $71=$70 | 4;
-      HEAP32[(($69)>>2)]=$71;
+      HEAP[$69]=$71;
       __label__ = 13; break;
     case 12: 
       var $73=$1;
       var $74=(($73+4)|0);
       var $75=(($74+96)|0);
       var $76=$75;
-      var $77=HEAP32[(($76)>>2)];
+      var $77=HEAP[$76];
       var $78=$77 & -5;
-      HEAP32[(($76)>>2)]=$78;
+      HEAP[$76]=$78;
       __label__ = 13; break;
     case 13: 
       var $80=$ret;
@@ -21583,18 +21450,18 @@ function _op_dec32($ctx, $src) {
       var $10=(($9+4)|0);
       var $11=(($10+96)|0);
       var $12=$11;
-      var $13=HEAP32[(($12)>>2)];
+      var $13=HEAP[$12];
       var $14=$13 | 128;
-      HEAP32[(($12)>>2)]=$14;
+      HEAP[$12]=$14;
       __label__ = 4; break;
     case 3: 
       var $16=$1;
       var $17=(($16+4)|0);
       var $18=(($17+96)|0);
       var $19=$18;
-      var $20=HEAP32[(($19)>>2)];
+      var $20=HEAP[$19];
       var $21=$20 & -129;
-      HEAP32[(($19)>>2)]=$21;
+      HEAP[$19]=$21;
       __label__ = 4; break;
     case 4: 
       var $23=$ret;
@@ -21605,18 +21472,18 @@ function _op_dec32($ctx, $src) {
       var $27=(($26+4)|0);
       var $28=(($27+96)|0);
       var $29=$28;
-      var $30=HEAP32[(($29)>>2)];
+      var $30=HEAP[$29];
       var $31=$30 | 64;
-      HEAP32[(($29)>>2)]=$31;
+      HEAP[$29]=$31;
       __label__ = 7; break;
     case 6: 
       var $33=$1;
       var $34=(($33+4)|0);
       var $35=(($34+96)|0);
       var $36=$35;
-      var $37=HEAP32[(($36)>>2)];
+      var $37=HEAP[$36];
       var $38=$37 & -65;
-      HEAP32[(($36)>>2)]=$38;
+      HEAP[$36]=$38;
       __label__ = 7; break;
     case 7: 
       var $40=$2;
@@ -21628,18 +21495,18 @@ function _op_dec32($ctx, $src) {
       var $45=(($44+4)|0);
       var $46=(($45+96)|0);
       var $47=$46;
-      var $48=HEAP32[(($47)>>2)];
+      var $48=HEAP[$47];
       var $49=$48 | 16;
-      HEAP32[(($47)>>2)]=$49;
+      HEAP[$47]=$49;
       __label__ = 10; break;
     case 9: 
       var $51=$1;
       var $52=(($51+4)|0);
       var $53=(($52+96)|0);
       var $54=$53;
-      var $55=HEAP32[(($54)>>2)];
+      var $55=HEAP[$54];
       var $56=$55 & -17;
-      HEAP32[(($54)>>2)]=$56;
+      HEAP[$54]=$56;
       __label__ = 10; break;
     case 10: 
       var $58=$ret;
@@ -21652,18 +21519,18 @@ function _op_dec32($ctx, $src) {
       var $64=(($63+4)|0);
       var $65=(($64+96)|0);
       var $66=$65;
-      var $67=HEAP32[(($66)>>2)];
+      var $67=HEAP[$66];
       var $68=$67 | 4;
-      HEAP32[(($66)>>2)]=$68;
+      HEAP[$66]=$68;
       __label__ = 13; break;
     case 12: 
       var $70=$1;
       var $71=(($70+4)|0);
       var $72=(($71+96)|0);
       var $73=$72;
-      var $74=HEAP32[(($73)>>2)];
+      var $74=HEAP[$73];
       var $75=$74 & -5;
-      HEAP32[(($73)>>2)]=$75;
+      HEAP[$73]=$75;
       __label__ = 13; break;
     case 13: 
       var $77=$ret;
@@ -21700,18 +21567,18 @@ function _op_inc8($ctx, $src) {
       var $13=(($12+4)|0);
       var $14=(($13+96)|0);
       var $15=$14;
-      var $16=HEAP32[(($15)>>2)];
+      var $16=HEAP[$15];
       var $17=$16 | 128;
-      HEAP32[(($15)>>2)]=$17;
+      HEAP[$15]=$17;
       __label__ = 4; break;
     case 3: 
       var $19=$1;
       var $20=(($19+4)|0);
       var $21=(($20+96)|0);
       var $22=$21;
-      var $23=HEAP32[(($22)>>2)];
+      var $23=HEAP[$22];
       var $24=$23 & -129;
-      HEAP32[(($22)>>2)]=$24;
+      HEAP[$22]=$24;
       __label__ = 4; break;
     case 4: 
       var $26=$ret;
@@ -21722,18 +21589,18 @@ function _op_inc8($ctx, $src) {
       var $30=(($29+4)|0);
       var $31=(($30+96)|0);
       var $32=$31;
-      var $33=HEAP32[(($32)>>2)];
+      var $33=HEAP[$32];
       var $34=$33 | 64;
-      HEAP32[(($32)>>2)]=$34;
+      HEAP[$32]=$34;
       __label__ = 7; break;
     case 6: 
       var $36=$1;
       var $37=(($36+4)|0);
       var $38=(($37+96)|0);
       var $39=$38;
-      var $40=HEAP32[(($39)>>2)];
+      var $40=HEAP[$39];
       var $41=$40 & -65;
-      HEAP32[(($39)>>2)]=$41;
+      HEAP[$39]=$41;
       __label__ = 7; break;
     case 7: 
       var $43=$2;
@@ -21747,18 +21614,18 @@ function _op_inc8($ctx, $src) {
       var $50=(($49+4)|0);
       var $51=(($50+96)|0);
       var $52=$51;
-      var $53=HEAP32[(($52)>>2)];
+      var $53=HEAP[$52];
       var $54=$53 | 16;
-      HEAP32[(($52)>>2)]=$54;
+      HEAP[$52]=$54;
       __label__ = 10; break;
     case 9: 
       var $56=$1;
       var $57=(($56+4)|0);
       var $58=(($57+96)|0);
       var $59=$58;
-      var $60=HEAP32[(($59)>>2)];
+      var $60=HEAP[$59];
       var $61=$60 & -17;
-      HEAP32[(($59)>>2)]=$61;
+      HEAP[$59]=$61;
       __label__ = 10; break;
     case 10: 
       var $63=$ret;
@@ -21770,18 +21637,18 @@ function _op_inc8($ctx, $src) {
       var $68=(($67+4)|0);
       var $69=(($68+96)|0);
       var $70=$69;
-      var $71=HEAP32[(($70)>>2)];
+      var $71=HEAP[$70];
       var $72=$71 | 4;
-      HEAP32[(($70)>>2)]=$72;
+      HEAP[$70]=$72;
       __label__ = 13; break;
     case 12: 
       var $74=$1;
       var $75=(($74+4)|0);
       var $76=(($75+96)|0);
       var $77=$76;
-      var $78=HEAP32[(($77)>>2)];
+      var $78=HEAP[$77];
       var $79=$78 & -5;
-      HEAP32[(($77)>>2)]=$79;
+      HEAP[$77]=$79;
       __label__ = 13; break;
     case 13: 
       var $81=$ret;
@@ -21818,18 +21685,18 @@ function _op_inc16($ctx, $src) {
       var $13=(($12+4)|0);
       var $14=(($13+96)|0);
       var $15=$14;
-      var $16=HEAP32[(($15)>>2)];
+      var $16=HEAP[$15];
       var $17=$16 | 128;
-      HEAP32[(($15)>>2)]=$17;
+      HEAP[$15]=$17;
       __label__ = 4; break;
     case 3: 
       var $19=$1;
       var $20=(($19+4)|0);
       var $21=(($20+96)|0);
       var $22=$21;
-      var $23=HEAP32[(($22)>>2)];
+      var $23=HEAP[$22];
       var $24=$23 & -129;
-      HEAP32[(($22)>>2)]=$24;
+      HEAP[$22]=$24;
       __label__ = 4; break;
     case 4: 
       var $26=$ret;
@@ -21840,18 +21707,18 @@ function _op_inc16($ctx, $src) {
       var $30=(($29+4)|0);
       var $31=(($30+96)|0);
       var $32=$31;
-      var $33=HEAP32[(($32)>>2)];
+      var $33=HEAP[$32];
       var $34=$33 | 64;
-      HEAP32[(($32)>>2)]=$34;
+      HEAP[$32]=$34;
       __label__ = 7; break;
     case 6: 
       var $36=$1;
       var $37=(($36+4)|0);
       var $38=(($37+96)|0);
       var $39=$38;
-      var $40=HEAP32[(($39)>>2)];
+      var $40=HEAP[$39];
       var $41=$40 & -65;
-      HEAP32[(($39)>>2)]=$41;
+      HEAP[$39]=$41;
       __label__ = 7; break;
     case 7: 
       var $43=$2;
@@ -21865,18 +21732,18 @@ function _op_inc16($ctx, $src) {
       var $50=(($49+4)|0);
       var $51=(($50+96)|0);
       var $52=$51;
-      var $53=HEAP32[(($52)>>2)];
+      var $53=HEAP[$52];
       var $54=$53 | 16;
-      HEAP32[(($52)>>2)]=$54;
+      HEAP[$52]=$54;
       __label__ = 10; break;
     case 9: 
       var $56=$1;
       var $57=(($56+4)|0);
       var $58=(($57+96)|0);
       var $59=$58;
-      var $60=HEAP32[(($59)>>2)];
+      var $60=HEAP[$59];
       var $61=$60 & -17;
-      HEAP32[(($59)>>2)]=$61;
+      HEAP[$59]=$61;
       __label__ = 10; break;
     case 10: 
       var $63=$ret;
@@ -21888,18 +21755,18 @@ function _op_inc16($ctx, $src) {
       var $68=(($67+4)|0);
       var $69=(($68+96)|0);
       var $70=$69;
-      var $71=HEAP32[(($70)>>2)];
+      var $71=HEAP[$70];
       var $72=$71 | 4;
-      HEAP32[(($70)>>2)]=$72;
+      HEAP[$70]=$72;
       __label__ = 13; break;
     case 12: 
       var $74=$1;
       var $75=(($74+4)|0);
       var $76=(($75+96)|0);
       var $77=$76;
-      var $78=HEAP32[(($77)>>2)];
+      var $78=HEAP[$77];
       var $79=$78 & -5;
-      HEAP32[(($77)>>2)]=$79;
+      HEAP[$77]=$79;
       __label__ = 13; break;
     case 13: 
       var $81=$ret;
@@ -21933,18 +21800,18 @@ function _op_inc32($ctx, $src) {
       var $10=(($9+4)|0);
       var $11=(($10+96)|0);
       var $12=$11;
-      var $13=HEAP32[(($12)>>2)];
+      var $13=HEAP[$12];
       var $14=$13 | 128;
-      HEAP32[(($12)>>2)]=$14;
+      HEAP[$12]=$14;
       __label__ = 4; break;
     case 3: 
       var $16=$1;
       var $17=(($16+4)|0);
       var $18=(($17+96)|0);
       var $19=$18;
-      var $20=HEAP32[(($19)>>2)];
+      var $20=HEAP[$19];
       var $21=$20 & -129;
-      HEAP32[(($19)>>2)]=$21;
+      HEAP[$19]=$21;
       __label__ = 4; break;
     case 4: 
       var $23=$ret;
@@ -21955,18 +21822,18 @@ function _op_inc32($ctx, $src) {
       var $27=(($26+4)|0);
       var $28=(($27+96)|0);
       var $29=$28;
-      var $30=HEAP32[(($29)>>2)];
+      var $30=HEAP[$29];
       var $31=$30 | 64;
-      HEAP32[(($29)>>2)]=$31;
+      HEAP[$29]=$31;
       __label__ = 7; break;
     case 6: 
       var $33=$1;
       var $34=(($33+4)|0);
       var $35=(($34+96)|0);
       var $36=$35;
-      var $37=HEAP32[(($36)>>2)];
+      var $37=HEAP[$36];
       var $38=$37 & -65;
-      HEAP32[(($36)>>2)]=$38;
+      HEAP[$36]=$38;
       __label__ = 7; break;
     case 7: 
       var $40=$2;
@@ -21979,18 +21846,18 @@ function _op_inc32($ctx, $src) {
       var $46=(($45+4)|0);
       var $47=(($46+96)|0);
       var $48=$47;
-      var $49=HEAP32[(($48)>>2)];
+      var $49=HEAP[$48];
       var $50=$49 | 16;
-      HEAP32[(($48)>>2)]=$50;
+      HEAP[$48]=$50;
       __label__ = 10; break;
     case 9: 
       var $52=$1;
       var $53=(($52+4)|0);
       var $54=(($53+96)|0);
       var $55=$54;
-      var $56=HEAP32[(($55)>>2)];
+      var $56=HEAP[$55];
       var $57=$56 & -17;
-      HEAP32[(($55)>>2)]=$57;
+      HEAP[$55]=$57;
       __label__ = 10; break;
     case 10: 
       var $59=$ret;
@@ -22003,18 +21870,18 @@ function _op_inc32($ctx, $src) {
       var $65=(($64+4)|0);
       var $66=(($65+96)|0);
       var $67=$66;
-      var $68=HEAP32[(($67)>>2)];
+      var $68=HEAP[$67];
       var $69=$68 | 4;
-      HEAP32[(($67)>>2)]=$69;
+      HEAP[$67]=$69;
       __label__ = 13; break;
     case 12: 
       var $71=$1;
       var $72=(($71+4)|0);
       var $73=(($72+96)|0);
       var $74=$73;
-      var $75=HEAP32[(($74)>>2)];
+      var $75=HEAP[$74];
       var $76=$75 & -5;
-      HEAP32[(($74)>>2)]=$76;
+      HEAP[$74]=$76;
       __label__ = 13; break;
     case 13: 
       var $78=$ret;
@@ -22059,7 +21926,7 @@ function _Sfx86OpcodeExec_inc($opcode, $ctx) {
       var $18=(($17+($14<<2))|0);
       var $19=$18;
       var $20=(($19)|0);
-      var $21=HEAP16[(($20)>>1)];
+      var $21=HEAP[$20];
       $w=$21;
       var $22=$3;
       var $23=$w;
@@ -22072,7 +21939,7 @@ function _Sfx86OpcodeExec_inc($opcode, $ctx) {
       var $30=(($29+($26<<2))|0);
       var $31=$30;
       var $32=(($31)|0);
-      HEAP16[(($32)>>1)]=$24;
+      HEAP[$32]=$24;
       $1=1;
       __label__ = 7; break;
     case 3: 
@@ -22095,7 +21962,7 @@ function _Sfx86OpcodeExec_inc($opcode, $ctx) {
       var $48=(($47+($44<<2))|0);
       var $49=$48;
       var $50=(($49)|0);
-      var $51=HEAP16[(($50)>>1)];
+      var $51=HEAP[$50];
       $w1=$51;
       var $52=$3;
       var $53=$w1;
@@ -22108,7 +21975,7 @@ function _Sfx86OpcodeExec_inc($opcode, $ctx) {
       var $60=(($59+($56<<2))|0);
       var $61=$60;
       var $62=(($61)|0);
-      HEAP16[(($62)>>1)]=$54;
+      HEAP[$62]=$54;
       $1=1;
       __label__ = 7; break;
     case 5: 
@@ -22149,8 +22016,8 @@ function _Sfx86OpcodeDec_inc($opcode, $ctx, $buf) {
       var $12=(($11)&255);
       var $13=(($12-64)|0);
       var $14=((_sx86_regs16+($13<<2))|0);
-      var $15=HEAP32[(($14)>>2)];
-      var $16=_sprintf($10, ((STRING_TABLE.__str187)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$15,tempInt));
+      var $15=HEAP[$14];
+      var $16=_sprintf($10, ((STRING_TABLE.__str187)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$15,tempInt));
       $1=1;
       __label__ = 7; break;
     case 3: 
@@ -22165,8 +22032,8 @@ function _Sfx86OpcodeDec_inc($opcode, $ctx, $buf) {
       var $25=(($24)&255);
       var $26=(($25-72)|0);
       var $27=((_sx86_regs16+($26<<2))|0);
-      var $28=HEAP32[(($27)>>2)];
-      var $29=_sprintf($23, ((STRING_TABLE.__str1188)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$28,tempInt));
+      var $28=HEAP[$27];
+      var $29=_sprintf($23, ((STRING_TABLE.__str1188)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$28,tempInt));
       $1=1;
       __label__ = 7; break;
     case 5: 
@@ -22195,7 +22062,7 @@ function _op_ncall16($ctx, $src) {
   var $4=$1;
   var $5=(($4+4)|0);
   var $6=(($5+100)|0);
-  var $7=HEAP32[(($6)>>2)];
+  var $7=HEAP[$6];
   var $8=(($7) & 65535);
   _softx86_stack_pushw($3, $8);
   var $9=$1;
@@ -22220,7 +22087,7 @@ function _op_ncall32($ctx, $src) {
   var $4=$1;
   var $5=(($4+4)|0);
   var $6=(($5+100)|0);
-  var $7=HEAPU32[(($6)>>2)];
+  var $7=HEAP[$6];
   var $8=$7 >>> 16;
   var $9=$8 & 65535;
   var $10=(($9) & 65535);
@@ -22229,7 +22096,7 @@ function _op_ncall32($ctx, $src) {
   var $12=$1;
   var $13=(($12+4)|0);
   var $14=(($13+100)|0);
-  var $15=HEAP32[(($14)>>2)];
+  var $15=HEAP[$14];
   var $16=$15 & 65535;
   var $17=(($16) & 65535);
   _softx86_stack_pushw($11, $17);
@@ -22372,13 +22239,13 @@ function _op_fcall16($ctx, $seg, $ofs) {
   var $7=(($6+32)|0);
   var $8=(($7+8)|0);
   var $9=(($8)|0);
-  var $10=HEAP16[(($9)>>1)];
+  var $10=HEAP[$9];
   _softx86_stack_pushw($4, $10);
   var $11=$1;
   var $12=$1;
   var $13=(($12+4)|0);
   var $14=(($13+100)|0);
-  var $15=HEAP32[(($14)>>2)];
+  var $15=HEAP[$14];
   var $16=(($15) & 65535);
   _softx86_stack_pushw($11, $16);
   var $17=$1;
@@ -22408,13 +22275,13 @@ function _op_fcall32($ctx, $seg, $ofs) {
   var $7=(($6+32)|0);
   var $8=(($7+8)|0);
   var $9=(($8)|0);
-  var $10=HEAP16[(($9)>>1)];
+  var $10=HEAP[$9];
   _softx86_stack_pushw($4, $10);
   var $11=$1;
   var $12=$1;
   var $13=(($12+4)|0);
   var $14=(($13+100)|0);
-  var $15=HEAP32[(($14)>>2)];
+  var $15=HEAP[$14];
   var $16=$15 & 65535;
   var $17=(($16) & 65535);
   _softx86_stack_pushw($11, $17);
@@ -22422,7 +22289,7 @@ function _op_fcall32($ctx, $seg, $ofs) {
   var $19=$1;
   var $20=(($19+4)|0);
   var $21=(($20+100)|0);
-  var $22=HEAPU32[(($21)>>2)];
+  var $22=HEAP[$21];
   var $23=$22 >>> 16;
   var $24=$23 & 65535;
   var $25=(($24) & 65535);
@@ -22742,7 +22609,7 @@ function _Sfx86OpcodeDec_group80($opcode, $ctx, $buf) {
       var $52=$4;
       var $53=$imm16;
       var $54=(($53)&65535);
-      var $55=_sprintf($52, ((STRING_TABLE.__str193)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$54,tempInt));
+      var $55=_sprintf($52, ((STRING_TABLE.__str193)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$54,tempInt));
       __label__ = 28; break;
     case 6: 
       var $57=$reg;
@@ -22753,7 +22620,7 @@ function _Sfx86OpcodeDec_group80($opcode, $ctx, $buf) {
       var $61=$4;
       var $62=$imm16;
       var $63=(($62)&65535);
-      var $64=_sprintf($61, ((STRING_TABLE.__str1194)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$63,tempInt));
+      var $64=_sprintf($61, ((STRING_TABLE.__str1194)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$63,tempInt));
       __label__ = 27; break;
     case 8: 
       var $66=$reg;
@@ -22764,7 +22631,7 @@ function _Sfx86OpcodeDec_group80($opcode, $ctx, $buf) {
       var $70=$4;
       var $71=$imm16;
       var $72=(($71)&65535);
-      var $73=_sprintf($70, ((STRING_TABLE.__str2195)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$72,tempInt));
+      var $73=_sprintf($70, ((STRING_TABLE.__str2195)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$72,tempInt));
       __label__ = 26; break;
     case 10: 
       var $75=$reg;
@@ -22775,7 +22642,7 @@ function _Sfx86OpcodeDec_group80($opcode, $ctx, $buf) {
       var $79=$4;
       var $80=$imm16;
       var $81=(($80)&65535);
-      var $82=_sprintf($79, ((STRING_TABLE.__str3196)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$81,tempInt));
+      var $82=_sprintf($79, ((STRING_TABLE.__str3196)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$81,tempInt));
       __label__ = 25; break;
     case 12: 
       var $84=$reg;
@@ -22786,7 +22653,7 @@ function _Sfx86OpcodeDec_group80($opcode, $ctx, $buf) {
       var $88=$4;
       var $89=$imm16;
       var $90=(($89)&65535);
-      var $91=_sprintf($88, ((STRING_TABLE.__str4197)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$90,tempInt));
+      var $91=_sprintf($88, ((STRING_TABLE.__str4197)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$90,tempInt));
       __label__ = 24; break;
     case 14: 
       var $93=$reg;
@@ -22797,7 +22664,7 @@ function _Sfx86OpcodeDec_group80($opcode, $ctx, $buf) {
       var $97=$4;
       var $98=$imm16;
       var $99=(($98)&65535);
-      var $100=_sprintf($97, ((STRING_TABLE.__str5198)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$99,tempInt));
+      var $100=_sprintf($97, ((STRING_TABLE.__str5198)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$99,tempInt));
       __label__ = 23; break;
     case 16: 
       var $102=$reg;
@@ -22808,7 +22675,7 @@ function _Sfx86OpcodeDec_group80($opcode, $ctx, $buf) {
       var $106=$4;
       var $107=$imm16;
       var $108=(($107)&65535);
-      var $109=_sprintf($106, ((STRING_TABLE.__str6199)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$108,tempInt));
+      var $109=_sprintf($106, ((STRING_TABLE.__str6199)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$108,tempInt));
       __label__ = 22; break;
     case 18: 
       var $111=$reg;
@@ -22819,7 +22686,7 @@ function _Sfx86OpcodeDec_group80($opcode, $ctx, $buf) {
       var $115=$4;
       var $116=$imm16;
       var $117=(($116)&65535);
-      var $118=_sprintf($115, ((STRING_TABLE.__str7200)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$117,tempInt));
+      var $118=_sprintf($115, ((STRING_TABLE.__str7200)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$117,tempInt));
       __label__ = 21; break;
     case 20: 
       $1=0;
@@ -23075,7 +22942,7 @@ function _Sfx86OpcodeDec_groupC0($opcode, $ctx, $buf) {
       var $40=$4;
       var $41=$imm16;
       var $42=(($41)&65535);
-      var $43=_sprintf($40, ((STRING_TABLE.__str8201)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$42,tempInt));
+      var $43=_sprintf($40, ((STRING_TABLE.__str8201)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$42,tempInt));
       __label__ = 23; break;
     case 4: 
       var $45=$reg;
@@ -23086,7 +22953,7 @@ function _Sfx86OpcodeDec_groupC0($opcode, $ctx, $buf) {
       var $49=$4;
       var $50=$imm16;
       var $51=(($50)&65535);
-      var $52=_sprintf($49, ((STRING_TABLE.__str9202)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$51,tempInt));
+      var $52=_sprintf($49, ((STRING_TABLE.__str9202)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$51,tempInt));
       __label__ = 22; break;
     case 6: 
       var $54=$reg;
@@ -23097,7 +22964,7 @@ function _Sfx86OpcodeDec_groupC0($opcode, $ctx, $buf) {
       var $58=$4;
       var $59=$imm16;
       var $60=(($59)&65535);
-      var $61=_sprintf($58, ((STRING_TABLE.__str10203)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$60,tempInt));
+      var $61=_sprintf($58, ((STRING_TABLE.__str10203)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$60,tempInt));
       __label__ = 21; break;
     case 8: 
       var $63=$reg;
@@ -23108,7 +22975,7 @@ function _Sfx86OpcodeDec_groupC0($opcode, $ctx, $buf) {
       var $67=$4;
       var $68=$imm16;
       var $69=(($68)&65535);
-      var $70=_sprintf($67, ((STRING_TABLE.__str11204)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$69,tempInt));
+      var $70=_sprintf($67, ((STRING_TABLE.__str11204)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$69,tempInt));
       __label__ = 20; break;
     case 10: 
       var $72=$reg;
@@ -23119,7 +22986,7 @@ function _Sfx86OpcodeDec_groupC0($opcode, $ctx, $buf) {
       var $76=$4;
       var $77=$imm16;
       var $78=(($77)&65535);
-      var $79=_sprintf($76, ((STRING_TABLE.__str12205)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$78,tempInt));
+      var $79=_sprintf($76, ((STRING_TABLE.__str12205)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$78,tempInt));
       __label__ = 19; break;
     case 12: 
       var $81=$reg;
@@ -23130,7 +22997,7 @@ function _Sfx86OpcodeDec_groupC0($opcode, $ctx, $buf) {
       var $85=$4;
       var $86=$imm16;
       var $87=(($86)&65535);
-      var $88=_sprintf($85, ((STRING_TABLE.__str13206)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$87,tempInt));
+      var $88=_sprintf($85, ((STRING_TABLE.__str13206)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$87,tempInt));
       __label__ = 18; break;
     case 14: 
       var $90=$reg;
@@ -23141,7 +23008,7 @@ function _Sfx86OpcodeDec_groupC0($opcode, $ctx, $buf) {
       var $94=$4;
       var $95=$imm16;
       var $96=(($95)&65535);
-      var $97=_sprintf($94, ((STRING_TABLE.__str14207)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$96,tempInt));
+      var $97=_sprintf($94, ((STRING_TABLE.__str14207)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$96,tempInt));
       __label__ = 17; break;
     case 16: 
       $1=0;
@@ -23497,7 +23364,7 @@ function _Sfx86OpcodeDec_groupD0($opcode, $ctx, $buf) {
       if ($45) { __label__ = 5; break; } else { __label__ = 6; break; }
     case 5: 
       var $47=$4;
-      var $48=_sprintf($47, ((STRING_TABLE.__str15208)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $48=_sprintf($47, ((STRING_TABLE.__str15208)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 25; break;
     case 6: 
       var $50=$reg;
@@ -23506,7 +23373,7 @@ function _Sfx86OpcodeDec_groupD0($opcode, $ctx, $buf) {
       if ($52) { __label__ = 7; break; } else { __label__ = 8; break; }
     case 7: 
       var $54=$4;
-      var $55=_sprintf($54, ((STRING_TABLE.__str16209)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $55=_sprintf($54, ((STRING_TABLE.__str16209)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 24; break;
     case 8: 
       var $57=$reg;
@@ -23515,7 +23382,7 @@ function _Sfx86OpcodeDec_groupD0($opcode, $ctx, $buf) {
       if ($59) { __label__ = 9; break; } else { __label__ = 10; break; }
     case 9: 
       var $61=$4;
-      var $62=_sprintf($61, ((STRING_TABLE.__str17210)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $62=_sprintf($61, ((STRING_TABLE.__str17210)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 23; break;
     case 10: 
       var $64=$reg;
@@ -23524,7 +23391,7 @@ function _Sfx86OpcodeDec_groupD0($opcode, $ctx, $buf) {
       if ($66) { __label__ = 11; break; } else { __label__ = 12; break; }
     case 11: 
       var $68=$4;
-      var $69=_sprintf($68, ((STRING_TABLE.__str18211)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $69=_sprintf($68, ((STRING_TABLE.__str18211)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 22; break;
     case 12: 
       var $71=$reg;
@@ -23533,7 +23400,7 @@ function _Sfx86OpcodeDec_groupD0($opcode, $ctx, $buf) {
       if ($73) { __label__ = 13; break; } else { __label__ = 14; break; }
     case 13: 
       var $75=$4;
-      var $76=_sprintf($75, ((STRING_TABLE.__str19212)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $76=_sprintf($75, ((STRING_TABLE.__str19212)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 21; break;
     case 14: 
       var $78=$reg;
@@ -23542,7 +23409,7 @@ function _Sfx86OpcodeDec_groupD0($opcode, $ctx, $buf) {
       if ($80) { __label__ = 15; break; } else { __label__ = 16; break; }
     case 15: 
       var $82=$4;
-      var $83=_sprintf($82, ((STRING_TABLE.__str20213)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $83=_sprintf($82, ((STRING_TABLE.__str20213)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 20; break;
     case 16: 
       var $85=$reg;
@@ -23551,7 +23418,7 @@ function _Sfx86OpcodeDec_groupD0($opcode, $ctx, $buf) {
       if ($87) { __label__ = 17; break; } else { __label__ = 18; break; }
     case 17: 
       var $89=$4;
-      var $90=_sprintf($89, ((STRING_TABLE.__str21214)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $90=_sprintf($89, ((STRING_TABLE.__str21214)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 19; break;
     case 18: 
       $1=0;
@@ -23577,7 +23444,7 @@ function _Sfx86OpcodeDec_groupD0($opcode, $ctx, $buf) {
       if ($102) { __label__ = 27; break; } else { __label__ = 28; break; }
     case 27: 
       var $104=$4;
-      var $105=_sprintf($104, ((STRING_TABLE.__str22215)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $105=_sprintf($104, ((STRING_TABLE.__str22215)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 47; break;
     case 28: 
       var $107=$reg;
@@ -23586,7 +23453,7 @@ function _Sfx86OpcodeDec_groupD0($opcode, $ctx, $buf) {
       if ($109) { __label__ = 29; break; } else { __label__ = 30; break; }
     case 29: 
       var $111=$4;
-      var $112=_sprintf($111, ((STRING_TABLE.__str23216)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $112=_sprintf($111, ((STRING_TABLE.__str23216)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 46; break;
     case 30: 
       var $114=$reg;
@@ -23595,7 +23462,7 @@ function _Sfx86OpcodeDec_groupD0($opcode, $ctx, $buf) {
       if ($116) { __label__ = 31; break; } else { __label__ = 32; break; }
     case 31: 
       var $118=$4;
-      var $119=_sprintf($118, ((STRING_TABLE.__str24217)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $119=_sprintf($118, ((STRING_TABLE.__str24217)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 45; break;
     case 32: 
       var $121=$reg;
@@ -23604,7 +23471,7 @@ function _Sfx86OpcodeDec_groupD0($opcode, $ctx, $buf) {
       if ($123) { __label__ = 33; break; } else { __label__ = 34; break; }
     case 33: 
       var $125=$4;
-      var $126=_sprintf($125, ((STRING_TABLE.__str25218)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $126=_sprintf($125, ((STRING_TABLE.__str25218)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 44; break;
     case 34: 
       var $128=$reg;
@@ -23613,7 +23480,7 @@ function _Sfx86OpcodeDec_groupD0($opcode, $ctx, $buf) {
       if ($130) { __label__ = 35; break; } else { __label__ = 36; break; }
     case 35: 
       var $132=$4;
-      var $133=_sprintf($132, ((STRING_TABLE.__str26219)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $133=_sprintf($132, ((STRING_TABLE.__str26219)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 43; break;
     case 36: 
       var $135=$reg;
@@ -23622,7 +23489,7 @@ function _Sfx86OpcodeDec_groupD0($opcode, $ctx, $buf) {
       if ($137) { __label__ = 37; break; } else { __label__ = 38; break; }
     case 37: 
       var $139=$4;
-      var $140=_sprintf($139, ((STRING_TABLE.__str27220)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $140=_sprintf($139, ((STRING_TABLE.__str27220)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 42; break;
     case 38: 
       var $142=$reg;
@@ -23631,7 +23498,7 @@ function _Sfx86OpcodeDec_groupD0($opcode, $ctx, $buf) {
       if ($144) { __label__ = 39; break; } else { __label__ = 40; break; }
     case 39: 
       var $146=$4;
-      var $147=_sprintf($146, ((STRING_TABLE.__str28221)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $147=_sprintf($146, ((STRING_TABLE.__str28221)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 41; break;
     case 40: 
       $1=0;
@@ -23830,7 +23697,7 @@ function _Sfx86OpcodeDec_groupC6($opcode, $ctx, $buf) {
       var $52=$4;
       var $53=$imm16;
       var $54=(($53)&65535);
-      var $55=_sprintf($52, ((STRING_TABLE.__str29222)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$54,tempInt));
+      var $55=_sprintf($52, ((STRING_TABLE.__str29222)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$54,tempInt));
       __label__ = 7; break;
     case 6: 
       $1=0;
@@ -24103,7 +23970,7 @@ function _Sfx86OpcodeDec_groupFE($opcode, $ctx, $buf) {
       if ($35) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
       var $37=$4;
-      var $38=_sprintf($37, ((STRING_TABLE.__str30223)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $38=_sprintf($37, ((STRING_TABLE.__str30223)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 25; break;
     case 4: 
       var $40=$reg;
@@ -24112,7 +23979,7 @@ function _Sfx86OpcodeDec_groupFE($opcode, $ctx, $buf) {
       if ($42) { __label__ = 5; break; } else { __label__ = 6; break; }
     case 5: 
       var $44=$4;
-      var $45=_sprintf($44, ((STRING_TABLE.__str31224)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $45=_sprintf($44, ((STRING_TABLE.__str31224)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 24; break;
     case 6: 
       var $47=$w16;
@@ -24128,7 +23995,7 @@ function _Sfx86OpcodeDec_groupFE($opcode, $ctx, $buf) {
       if ($53) { __label__ = 9; break; } else { __label__ = 10; break; }
     case 9: 
       var $55=$4;
-      var $56=_sprintf($55, ((STRING_TABLE.__str32225)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $56=_sprintf($55, ((STRING_TABLE.__str32225)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 23; break;
     case 10: 
       var $58=$reg;
@@ -24137,7 +24004,7 @@ function _Sfx86OpcodeDec_groupFE($opcode, $ctx, $buf) {
       if ($60) { __label__ = 11; break; } else { __label__ = 12; break; }
     case 11: 
       var $62=$4;
-      var $63=_sprintf($62, ((STRING_TABLE.__str33226)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $63=_sprintf($62, ((STRING_TABLE.__str33226)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 22; break;
     case 12: 
       var $65=$reg;
@@ -24146,7 +24013,7 @@ function _Sfx86OpcodeDec_groupFE($opcode, $ctx, $buf) {
       if ($67) { __label__ = 13; break; } else { __label__ = 14; break; }
     case 13: 
       var $69=$4;
-      var $70=_sprintf($69, ((STRING_TABLE.__str34227)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $70=_sprintf($69, ((STRING_TABLE.__str34227)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 21; break;
     case 14: 
       var $72=$reg;
@@ -24155,7 +24022,7 @@ function _Sfx86OpcodeDec_groupFE($opcode, $ctx, $buf) {
       if ($74) { __label__ = 15; break; } else { __label__ = 16; break; }
     case 15: 
       var $76=$4;
-      var $77=_sprintf($76, ((STRING_TABLE.__str35228)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $77=_sprintf($76, ((STRING_TABLE.__str35228)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 20; break;
     case 16: 
       var $79=$reg;
@@ -24164,7 +24031,7 @@ function _Sfx86OpcodeDec_groupFE($opcode, $ctx, $buf) {
       if ($81) { __label__ = 17; break; } else { __label__ = 18; break; }
     case 17: 
       var $83=$4;
-      var $84=_sprintf($83, ((STRING_TABLE.__str36229)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $84=_sprintf($83, ((STRING_TABLE.__str36229)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 19; break;
     case 18: 
       $1=0;
@@ -24320,7 +24187,7 @@ function _Sfx86OpcodeDec_group8F($opcode, $ctx, $buf) {
       if ($29) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
       var $31=$4;
-      var $32=_sprintf($31, ((STRING_TABLE.__str37)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $32=_sprintf($31, ((STRING_TABLE.__str37)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 5; break;
     case 4: 
       $1=0;
@@ -24617,7 +24484,7 @@ function _Sfx86OpcodeDec_groupF6($opcode, $ctx, $buf) {
       var $57=$4;
       var $58=$imm16;
       var $59=(($58)&65535);
-      var $60=_sprintf($57, ((STRING_TABLE.__str38)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=$59,tempInt));
+      var $60=_sprintf($57, ((STRING_TABLE.__str38)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=$59,tempInt));
       __label__ = 27; break;
     case 8: 
       var $62=$reg;
@@ -24626,7 +24493,7 @@ function _Sfx86OpcodeDec_groupF6($opcode, $ctx, $buf) {
       if ($64) { __label__ = 9; break; } else { __label__ = 10; break; }
     case 9: 
       var $66=$4;
-      var $67=_sprintf($66, ((STRING_TABLE.__str39)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $67=_sprintf($66, ((STRING_TABLE.__str39)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 26; break;
     case 10: 
       var $69=$reg;
@@ -24635,7 +24502,7 @@ function _Sfx86OpcodeDec_groupF6($opcode, $ctx, $buf) {
       if ($71) { __label__ = 11; break; } else { __label__ = 12; break; }
     case 11: 
       var $73=$4;
-      var $74=_sprintf($73, ((STRING_TABLE.__str40)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $74=_sprintf($73, ((STRING_TABLE.__str40)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 25; break;
     case 12: 
       var $76=$reg;
@@ -24644,7 +24511,7 @@ function _Sfx86OpcodeDec_groupF6($opcode, $ctx, $buf) {
       if ($78) { __label__ = 13; break; } else { __label__ = 14; break; }
     case 13: 
       var $80=$4;
-      var $81=_sprintf($80, ((STRING_TABLE.__str41)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $81=_sprintf($80, ((STRING_TABLE.__str41)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 24; break;
     case 14: 
       var $83=$reg;
@@ -24653,7 +24520,7 @@ function _Sfx86OpcodeDec_groupF6($opcode, $ctx, $buf) {
       if ($85) { __label__ = 15; break; } else { __label__ = 16; break; }
     case 15: 
       var $87=$4;
-      var $88=_sprintf($87, ((STRING_TABLE.__str42)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $88=_sprintf($87, ((STRING_TABLE.__str42)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 23; break;
     case 16: 
       var $90=$reg;
@@ -24662,7 +24529,7 @@ function _Sfx86OpcodeDec_groupF6($opcode, $ctx, $buf) {
       if ($92) { __label__ = 17; break; } else { __label__ = 18; break; }
     case 17: 
       var $94=$4;
-      var $95=_sprintf($94, ((STRING_TABLE.__str43)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $95=_sprintf($94, ((STRING_TABLE.__str43)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 22; break;
     case 18: 
       var $97=$reg;
@@ -24671,7 +24538,7 @@ function _Sfx86OpcodeDec_groupF6($opcode, $ctx, $buf) {
       if ($99) { __label__ = 19; break; } else { __label__ = 20; break; }
     case 19: 
       var $101=$4;
-      var $102=_sprintf($101, ((STRING_TABLE.__str44)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),tempInt));
+      var $102=_sprintf($101, ((STRING_TABLE.__str44)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),tempInt));
       __label__ = 21; break;
     case 20: 
       $1=0;
@@ -24748,7 +24615,7 @@ function _Sfx86OpcodeExec_int($opcode, $ctx) {
       var $26=(($25+4)|0);
       var $27=(($26+96)|0);
       var $28=$27;
-      var $29=HEAP32[(($28)>>2)];
+      var $29=HEAP[$28];
       var $30=$29 & 2048;
       var $31=(($30)|0)!=0;
       if ($31) { __label__ = 7; break; } else { __label__ = 8; break; }
@@ -24810,7 +24677,7 @@ function _Sfx86OpcodeDec_int($opcode, $ctx, $buf) {
       var $18=$4;
       var $19=$i;
       var $20=(($19)&255);
-      var $21=_sprintf($18, ((STRING_TABLE.__str1259)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$20,tempInt));
+      var $21=_sprintf($18, ((STRING_TABLE.__str1259)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$20,tempInt));
       $1=1;
       __label__ = 10; break;
     case 5: 
@@ -24860,7 +24727,7 @@ function _op_sar8($ctx, $src, $val) {
       var $5=$2;
       var $6=(($5+180)|0);
       var $7=(($6+2)|0);
-      var $8=HEAP8[($7)];
+      var $8=HEAP[$7];
       var $9=(($8 << 24) >> 24)!=0;
       if ($9) { __label__ = 2; break; } else { __label__ = 3; break; }
     case 2: 
@@ -24928,18 +24795,18 @@ function _op_sar8($ctx, $src, $val) {
       var $54=(($53+4)|0);
       var $55=(($54+96)|0);
       var $56=$55;
-      var $57=HEAP32[(($56)>>2)];
+      var $57=HEAP[$56];
       var $58=$57 | 1;
-      HEAP32[(($56)>>2)]=$58;
+      HEAP[$56]=$58;
       __label__ = 14; break;
     case 13: 
       var $60=$2;
       var $61=(($60+4)|0);
       var $62=(($61+96)|0);
       var $63=$62;
-      var $64=HEAP32[(($63)>>2)];
+      var $64=HEAP[$63];
       var $65=$64 & -2;
-      HEAP32[(($63)>>2)]=$65;
+      HEAP[$63]=$65;
       __label__ = 14; break;
     case 14: 
       var $67=$ret;
@@ -24968,18 +24835,18 @@ function _op_sar8($ctx, $src, $val) {
       var $86=(($85+4)|0);
       var $87=(($86+96)|0);
       var $88=$87;
-      var $89=HEAP32[(($88)>>2)];
+      var $89=HEAP[$88];
       var $90=$89 | 2048;
-      HEAP32[(($88)>>2)]=$90;
+      HEAP[$88]=$90;
       __label__ = 18; break;
     case 17: 
       var $92=$2;
       var $93=(($92+4)|0);
       var $94=(($93+96)|0);
       var $95=$94;
-      var $96=HEAP32[(($95)>>2)];
+      var $96=HEAP[$95];
       var $97=$96 & -2049;
-      HEAP32[(($95)>>2)]=$97;
+      HEAP[$95]=$97;
       __label__ = 18; break;
     case 18: 
       __label__ = 20; break;
@@ -24988,9 +24855,9 @@ function _op_sar8($ctx, $src, $val) {
       var $101=(($100+4)|0);
       var $102=(($101+96)|0);
       var $103=$102;
-      var $104=HEAP32[(($103)>>2)];
+      var $104=HEAP[$103];
       var $105=$104 & -2049;
-      HEAP32[(($103)>>2)]=$105;
+      HEAP[$103]=$105;
       __label__ = 20; break;
     case 20: 
       var $107=$ret;
@@ -25003,18 +24870,18 @@ function _op_sar8($ctx, $src, $val) {
       var $113=(($112+4)|0);
       var $114=(($113+96)|0);
       var $115=$114;
-      var $116=HEAP32[(($115)>>2)];
+      var $116=HEAP[$115];
       var $117=$116 | 128;
-      HEAP32[(($115)>>2)]=$117;
+      HEAP[$115]=$117;
       __label__ = 23; break;
     case 22: 
       var $119=$2;
       var $120=(($119+4)|0);
       var $121=(($120+96)|0);
       var $122=$121;
-      var $123=HEAP32[(($122)>>2)];
+      var $123=HEAP[$122];
       var $124=$123 & -129;
-      HEAP32[(($122)>>2)]=$124;
+      HEAP[$122]=$124;
       __label__ = 23; break;
     case 23: 
       var $126=$ret;
@@ -25025,27 +24892,27 @@ function _op_sar8($ctx, $src, $val) {
       var $130=(($129+4)|0);
       var $131=(($130+96)|0);
       var $132=$131;
-      var $133=HEAP32[(($132)>>2)];
+      var $133=HEAP[$132];
       var $134=$133 | 64;
-      HEAP32[(($132)>>2)]=$134;
+      HEAP[$132]=$134;
       __label__ = 26; break;
     case 25: 
       var $136=$2;
       var $137=(($136+4)|0);
       var $138=(($137+96)|0);
       var $139=$138;
-      var $140=HEAP32[(($139)>>2)];
+      var $140=HEAP[$139];
       var $141=$140 & -65;
-      HEAP32[(($139)>>2)]=$141;
+      HEAP[$139]=$141;
       __label__ = 26; break;
     case 26: 
       var $143=$2;
       var $144=(($143+4)|0);
       var $145=(($144+96)|0);
       var $146=$145;
-      var $147=HEAP32[(($146)>>2)];
+      var $147=HEAP[$146];
       var $148=$147 & -17;
-      HEAP32[(($146)>>2)]=$148;
+      HEAP[$146]=$148;
       var $149=$ret;
       var $150=_softx86_parity8($149);
       var $151=(($150)|0)!=0;
@@ -25055,18 +24922,18 @@ function _op_sar8($ctx, $src, $val) {
       var $154=(($153+4)|0);
       var $155=(($154+96)|0);
       var $156=$155;
-      var $157=HEAP32[(($156)>>2)];
+      var $157=HEAP[$156];
       var $158=$157 | 4;
-      HEAP32[(($156)>>2)]=$158;
+      HEAP[$156]=$158;
       __label__ = 29; break;
     case 28: 
       var $160=$2;
       var $161=(($160+4)|0);
       var $162=(($161+96)|0);
       var $163=$162;
-      var $164=HEAP32[(($163)>>2)];
+      var $164=HEAP[$163];
       var $165=$164 & -5;
-      HEAP32[(($163)>>2)]=$165;
+      HEAP[$163]=$165;
       __label__ = 29; break;
     case 29: 
       var $167=$ret;
@@ -25113,7 +24980,7 @@ function _op_sar_cl_8($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAP8[($10)];
+  var $11=HEAP[$10];
   var $12=_op_sar8($3, $4, $11);
   ;
   return $12;
@@ -25140,7 +25007,7 @@ function _op_sar16($ctx, $src, $val) {
       var $5=$2;
       var $6=(($5+180)|0);
       var $7=(($6+2)|0);
-      var $8=HEAP8[($7)];
+      var $8=HEAP[$7];
       var $9=(($8 << 24) >> 24)!=0;
       if ($9) { __label__ = 2; break; } else { __label__ = 3; break; }
     case 2: 
@@ -25192,18 +25059,18 @@ function _op_sar16($ctx, $src, $val) {
       var $42=(($41+4)|0);
       var $43=(($42+96)|0);
       var $44=$43;
-      var $45=HEAP32[(($44)>>2)];
+      var $45=HEAP[$44];
       var $46=$45 | 1;
-      HEAP32[(($44)>>2)]=$46;
+      HEAP[$44]=$46;
       __label__ = 11; break;
     case 10: 
       var $48=$2;
       var $49=(($48+4)|0);
       var $50=(($49+96)|0);
       var $51=$50;
-      var $52=HEAP32[(($51)>>2)];
+      var $52=HEAP[$51];
       var $53=$52 & -2;
-      HEAP32[(($51)>>2)]=$53;
+      HEAP[$51]=$53;
       __label__ = 11; break;
     case 11: 
       var $55=$ret;
@@ -25225,18 +25092,18 @@ function _op_sar16($ctx, $src, $val) {
       var $68=(($67+4)|0);
       var $69=(($68+96)|0);
       var $70=$69;
-      var $71=HEAP32[(($70)>>2)];
+      var $71=HEAP[$70];
       var $72=$71 | 2048;
-      HEAP32[(($70)>>2)]=$72;
+      HEAP[$70]=$72;
       __label__ = 15; break;
     case 14: 
       var $74=$2;
       var $75=(($74+4)|0);
       var $76=(($75+96)|0);
       var $77=$76;
-      var $78=HEAP32[(($77)>>2)];
+      var $78=HEAP[$77];
       var $79=$78 & -2049;
-      HEAP32[(($77)>>2)]=$79;
+      HEAP[$77]=$79;
       __label__ = 15; break;
     case 15: 
       __label__ = 17; break;
@@ -25245,9 +25112,9 @@ function _op_sar16($ctx, $src, $val) {
       var $83=(($82+4)|0);
       var $84=(($83+96)|0);
       var $85=$84;
-      var $86=HEAP32[(($85)>>2)];
+      var $86=HEAP[$85];
       var $87=$86 & -2049;
-      HEAP32[(($85)>>2)]=$87;
+      HEAP[$85]=$87;
       __label__ = 17; break;
     case 17: 
       var $89=$ret;
@@ -25260,18 +25127,18 @@ function _op_sar16($ctx, $src, $val) {
       var $95=(($94+4)|0);
       var $96=(($95+96)|0);
       var $97=$96;
-      var $98=HEAP32[(($97)>>2)];
+      var $98=HEAP[$97];
       var $99=$98 | 128;
-      HEAP32[(($97)>>2)]=$99;
+      HEAP[$97]=$99;
       __label__ = 20; break;
     case 19: 
       var $101=$2;
       var $102=(($101+4)|0);
       var $103=(($102+96)|0);
       var $104=$103;
-      var $105=HEAP32[(($104)>>2)];
+      var $105=HEAP[$104];
       var $106=$105 & -129;
-      HEAP32[(($104)>>2)]=$106;
+      HEAP[$104]=$106;
       __label__ = 20; break;
     case 20: 
       var $108=$ret;
@@ -25282,27 +25149,27 @@ function _op_sar16($ctx, $src, $val) {
       var $112=(($111+4)|0);
       var $113=(($112+96)|0);
       var $114=$113;
-      var $115=HEAP32[(($114)>>2)];
+      var $115=HEAP[$114];
       var $116=$115 | 64;
-      HEAP32[(($114)>>2)]=$116;
+      HEAP[$114]=$116;
       __label__ = 23; break;
     case 22: 
       var $118=$2;
       var $119=(($118+4)|0);
       var $120=(($119+96)|0);
       var $121=$120;
-      var $122=HEAP32[(($121)>>2)];
+      var $122=HEAP[$121];
       var $123=$122 & -65;
-      HEAP32[(($121)>>2)]=$123;
+      HEAP[$121]=$123;
       __label__ = 23; break;
     case 23: 
       var $125=$2;
       var $126=(($125+4)|0);
       var $127=(($126+96)|0);
       var $128=$127;
-      var $129=HEAP32[(($128)>>2)];
+      var $129=HEAP[$128];
       var $130=$129 & -17;
-      HEAP32[(($128)>>2)]=$130;
+      HEAP[$128]=$130;
       var $131=$ret;
       var $132=_softx86_parity16($131);
       var $133=(($132)|0)!=0;
@@ -25312,18 +25179,18 @@ function _op_sar16($ctx, $src, $val) {
       var $136=(($135+4)|0);
       var $137=(($136+96)|0);
       var $138=$137;
-      var $139=HEAP32[(($138)>>2)];
+      var $139=HEAP[$138];
       var $140=$139 | 4;
-      HEAP32[(($138)>>2)]=$140;
+      HEAP[$138]=$140;
       __label__ = 26; break;
     case 25: 
       var $142=$2;
       var $143=(($142+4)|0);
       var $144=(($143+96)|0);
       var $145=$144;
-      var $146=HEAP32[(($145)>>2)];
+      var $146=HEAP[$145];
       var $147=$146 & -5;
-      HEAP32[(($145)>>2)]=$147;
+      HEAP[$145]=$147;
       __label__ = 26; break;
     case 26: 
       var $149=$ret;
@@ -25370,7 +25237,7 @@ function _op_sar_cl_16($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAPU8[($10)];
+  var $11=HEAP[$10];
   var $12=(($11)&255);
   var $13=_op_sar16($3, $4, $12);
   ;
@@ -25398,7 +25265,7 @@ function _op_sar32($ctx, $src, $val) {
       var $5=$2;
       var $6=(($5+180)|0);
       var $7=(($6+2)|0);
-      var $8=HEAP8[($7)];
+      var $8=HEAP[$7];
       var $9=(($8 << 24) >> 24)!=0;
       if ($9) { __label__ = 2; break; } else { __label__ = 3; break; }
     case 2: 
@@ -25445,18 +25312,18 @@ function _op_sar32($ctx, $src, $val) {
       var $37=(($36+4)|0);
       var $38=(($37+96)|0);
       var $39=$38;
-      var $40=HEAP32[(($39)>>2)];
+      var $40=HEAP[$39];
       var $41=$40 | 1;
-      HEAP32[(($39)>>2)]=$41;
+      HEAP[$39]=$41;
       __label__ = 11; break;
     case 10: 
       var $43=$2;
       var $44=(($43+4)|0);
       var $45=(($44+96)|0);
       var $46=$45;
-      var $47=HEAP32[(($46)>>2)];
+      var $47=HEAP[$46];
       var $48=$47 & -2;
-      HEAP32[(($46)>>2)]=$48;
+      HEAP[$46]=$48;
       __label__ = 11; break;
     case 11: 
       var $50=$ret;
@@ -25475,18 +25342,18 @@ function _op_sar32($ctx, $src, $val) {
       var $60=(($59+4)|0);
       var $61=(($60+96)|0);
       var $62=$61;
-      var $63=HEAP32[(($62)>>2)];
+      var $63=HEAP[$62];
       var $64=$63 | 2048;
-      HEAP32[(($62)>>2)]=$64;
+      HEAP[$62]=$64;
       __label__ = 15; break;
     case 14: 
       var $66=$2;
       var $67=(($66+4)|0);
       var $68=(($67+96)|0);
       var $69=$68;
-      var $70=HEAP32[(($69)>>2)];
+      var $70=HEAP[$69];
       var $71=$70 & -2049;
-      HEAP32[(($69)>>2)]=$71;
+      HEAP[$69]=$71;
       __label__ = 15; break;
     case 15: 
       __label__ = 17; break;
@@ -25495,9 +25362,9 @@ function _op_sar32($ctx, $src, $val) {
       var $75=(($74+4)|0);
       var $76=(($75+96)|0);
       var $77=$76;
-      var $78=HEAP32[(($77)>>2)];
+      var $78=HEAP[$77];
       var $79=$78 & -2049;
-      HEAP32[(($77)>>2)]=$79;
+      HEAP[$77]=$79;
       __label__ = 17; break;
     case 17: 
       var $81=$ret;
@@ -25509,18 +25376,18 @@ function _op_sar32($ctx, $src, $val) {
       var $86=(($85+4)|0);
       var $87=(($86+96)|0);
       var $88=$87;
-      var $89=HEAP32[(($88)>>2)];
+      var $89=HEAP[$88];
       var $90=$89 | 128;
-      HEAP32[(($88)>>2)]=$90;
+      HEAP[$88]=$90;
       __label__ = 20; break;
     case 19: 
       var $92=$2;
       var $93=(($92+4)|0);
       var $94=(($93+96)|0);
       var $95=$94;
-      var $96=HEAP32[(($95)>>2)];
+      var $96=HEAP[$95];
       var $97=$96 & -129;
-      HEAP32[(($95)>>2)]=$97;
+      HEAP[$95]=$97;
       __label__ = 20; break;
     case 20: 
       var $99=$ret;
@@ -25531,27 +25398,27 @@ function _op_sar32($ctx, $src, $val) {
       var $103=(($102+4)|0);
       var $104=(($103+96)|0);
       var $105=$104;
-      var $106=HEAP32[(($105)>>2)];
+      var $106=HEAP[$105];
       var $107=$106 | 64;
-      HEAP32[(($105)>>2)]=$107;
+      HEAP[$105]=$107;
       __label__ = 23; break;
     case 22: 
       var $109=$2;
       var $110=(($109+4)|0);
       var $111=(($110+96)|0);
       var $112=$111;
-      var $113=HEAP32[(($112)>>2)];
+      var $113=HEAP[$112];
       var $114=$113 & -65;
-      HEAP32[(($112)>>2)]=$114;
+      HEAP[$112]=$114;
       __label__ = 23; break;
     case 23: 
       var $116=$2;
       var $117=(($116+4)|0);
       var $118=(($117+96)|0);
       var $119=$118;
-      var $120=HEAP32[(($119)>>2)];
+      var $120=HEAP[$119];
       var $121=$120 & -17;
-      HEAP32[(($119)>>2)]=$121;
+      HEAP[$119]=$121;
       var $122=$ret;
       var $123=_softx86_parity32($122);
       var $124=(($123)|0)!=0;
@@ -25561,18 +25428,18 @@ function _op_sar32($ctx, $src, $val) {
       var $127=(($126+4)|0);
       var $128=(($127+96)|0);
       var $129=$128;
-      var $130=HEAP32[(($129)>>2)];
+      var $130=HEAP[$129];
       var $131=$130 | 4;
-      HEAP32[(($129)>>2)]=$131;
+      HEAP[$129]=$131;
       __label__ = 26; break;
     case 25: 
       var $133=$2;
       var $134=(($133+4)|0);
       var $135=(($134+96)|0);
       var $136=$135;
-      var $137=HEAP32[(($136)>>2)];
+      var $137=HEAP[$136];
       var $138=$137 & -5;
-      HEAP32[(($136)>>2)]=$138;
+      HEAP[$136]=$138;
       __label__ = 26; break;
     case 26: 
       var $140=$ret;
@@ -25619,7 +25486,7 @@ function _op_sar_cl_32($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAPU8[($10)];
+  var $11=HEAP[$10];
   var $12=(($11)&255);
   var $13=_op_sar32($3, $4, $12);
   ;
@@ -25647,7 +25514,7 @@ function _op_shr8($ctx, $src, $val) {
       var $5=$2;
       var $6=(($5+180)|0);
       var $7=(($6+2)|0);
-      var $8=HEAP8[($7)];
+      var $8=HEAP[$7];
       var $9=(($8 << 24) >> 24)!=0;
       if ($9) { __label__ = 2; break; } else { __label__ = 3; break; }
     case 2: 
@@ -25699,18 +25566,18 @@ function _op_shr8($ctx, $src, $val) {
       var $42=(($41+4)|0);
       var $43=(($42+96)|0);
       var $44=$43;
-      var $45=HEAP32[(($44)>>2)];
+      var $45=HEAP[$44];
       var $46=$45 | 1;
-      HEAP32[(($44)>>2)]=$46;
+      HEAP[$44]=$46;
       __label__ = 11; break;
     case 10: 
       var $48=$2;
       var $49=(($48+4)|0);
       var $50=(($49+96)|0);
       var $51=$50;
-      var $52=HEAP32[(($51)>>2)];
+      var $52=HEAP[$51];
       var $53=$52 & -2;
-      HEAP32[(($51)>>2)]=$53;
+      HEAP[$51]=$53;
       __label__ = 11; break;
     case 11: 
       var $55=$ret;
@@ -25732,18 +25599,18 @@ function _op_shr8($ctx, $src, $val) {
       var $68=(($67+4)|0);
       var $69=(($68+96)|0);
       var $70=$69;
-      var $71=HEAP32[(($70)>>2)];
+      var $71=HEAP[$70];
       var $72=$71 | 2048;
-      HEAP32[(($70)>>2)]=$72;
+      HEAP[$70]=$72;
       __label__ = 15; break;
     case 14: 
       var $74=$2;
       var $75=(($74+4)|0);
       var $76=(($75+96)|0);
       var $77=$76;
-      var $78=HEAP32[(($77)>>2)];
+      var $78=HEAP[$77];
       var $79=$78 & -2049;
-      HEAP32[(($77)>>2)]=$79;
+      HEAP[$77]=$79;
       __label__ = 15; break;
     case 15: 
       __label__ = 17; break;
@@ -25752,9 +25619,9 @@ function _op_shr8($ctx, $src, $val) {
       var $83=(($82+4)|0);
       var $84=(($83+96)|0);
       var $85=$84;
-      var $86=HEAP32[(($85)>>2)];
+      var $86=HEAP[$85];
       var $87=$86 & -2049;
-      HEAP32[(($85)>>2)]=$87;
+      HEAP[$85]=$87;
       __label__ = 17; break;
     case 17: 
       var $89=$ret;
@@ -25767,18 +25634,18 @@ function _op_shr8($ctx, $src, $val) {
       var $95=(($94+4)|0);
       var $96=(($95+96)|0);
       var $97=$96;
-      var $98=HEAP32[(($97)>>2)];
+      var $98=HEAP[$97];
       var $99=$98 | 128;
-      HEAP32[(($97)>>2)]=$99;
+      HEAP[$97]=$99;
       __label__ = 20; break;
     case 19: 
       var $101=$2;
       var $102=(($101+4)|0);
       var $103=(($102+96)|0);
       var $104=$103;
-      var $105=HEAP32[(($104)>>2)];
+      var $105=HEAP[$104];
       var $106=$105 & -129;
-      HEAP32[(($104)>>2)]=$106;
+      HEAP[$104]=$106;
       __label__ = 20; break;
     case 20: 
       var $108=$ret;
@@ -25789,27 +25656,27 @@ function _op_shr8($ctx, $src, $val) {
       var $112=(($111+4)|0);
       var $113=(($112+96)|0);
       var $114=$113;
-      var $115=HEAP32[(($114)>>2)];
+      var $115=HEAP[$114];
       var $116=$115 | 64;
-      HEAP32[(($114)>>2)]=$116;
+      HEAP[$114]=$116;
       __label__ = 23; break;
     case 22: 
       var $118=$2;
       var $119=(($118+4)|0);
       var $120=(($119+96)|0);
       var $121=$120;
-      var $122=HEAP32[(($121)>>2)];
+      var $122=HEAP[$121];
       var $123=$122 & -65;
-      HEAP32[(($121)>>2)]=$123;
+      HEAP[$121]=$123;
       __label__ = 23; break;
     case 23: 
       var $125=$2;
       var $126=(($125+4)|0);
       var $127=(($126+96)|0);
       var $128=$127;
-      var $129=HEAP32[(($128)>>2)];
+      var $129=HEAP[$128];
       var $130=$129 & -17;
-      HEAP32[(($128)>>2)]=$130;
+      HEAP[$128]=$130;
       var $131=$ret;
       var $132=_softx86_parity8($131);
       var $133=(($132)|0)!=0;
@@ -25819,18 +25686,18 @@ function _op_shr8($ctx, $src, $val) {
       var $136=(($135+4)|0);
       var $137=(($136+96)|0);
       var $138=$137;
-      var $139=HEAP32[(($138)>>2)];
+      var $139=HEAP[$138];
       var $140=$139 | 4;
-      HEAP32[(($138)>>2)]=$140;
+      HEAP[$138]=$140;
       __label__ = 26; break;
     case 25: 
       var $142=$2;
       var $143=(($142+4)|0);
       var $144=(($143+96)|0);
       var $145=$144;
-      var $146=HEAP32[(($145)>>2)];
+      var $146=HEAP[$145];
       var $147=$146 & -5;
-      HEAP32[(($145)>>2)]=$147;
+      HEAP[$145]=$147;
       __label__ = 26; break;
     case 26: 
       var $149=$ret;
@@ -25877,7 +25744,7 @@ function _op_shr_cl_8($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAP8[($10)];
+  var $11=HEAP[$10];
   var $12=_op_shr8($3, $4, $11);
   ;
   return $12;
@@ -25904,7 +25771,7 @@ function _op_shr16($ctx, $src, $val) {
       var $5=$2;
       var $6=(($5+180)|0);
       var $7=(($6+2)|0);
-      var $8=HEAP8[($7)];
+      var $8=HEAP[$7];
       var $9=(($8 << 24) >> 24)!=0;
       if ($9) { __label__ = 2; break; } else { __label__ = 3; break; }
     case 2: 
@@ -25956,18 +25823,18 @@ function _op_shr16($ctx, $src, $val) {
       var $42=(($41+4)|0);
       var $43=(($42+96)|0);
       var $44=$43;
-      var $45=HEAP32[(($44)>>2)];
+      var $45=HEAP[$44];
       var $46=$45 | 1;
-      HEAP32[(($44)>>2)]=$46;
+      HEAP[$44]=$46;
       __label__ = 11; break;
     case 10: 
       var $48=$2;
       var $49=(($48+4)|0);
       var $50=(($49+96)|0);
       var $51=$50;
-      var $52=HEAP32[(($51)>>2)];
+      var $52=HEAP[$51];
       var $53=$52 & -2;
-      HEAP32[(($51)>>2)]=$53;
+      HEAP[$51]=$53;
       __label__ = 11; break;
     case 11: 
       var $55=$ret;
@@ -25989,18 +25856,18 @@ function _op_shr16($ctx, $src, $val) {
       var $68=(($67+4)|0);
       var $69=(($68+96)|0);
       var $70=$69;
-      var $71=HEAP32[(($70)>>2)];
+      var $71=HEAP[$70];
       var $72=$71 | 2048;
-      HEAP32[(($70)>>2)]=$72;
+      HEAP[$70]=$72;
       __label__ = 15; break;
     case 14: 
       var $74=$2;
       var $75=(($74+4)|0);
       var $76=(($75+96)|0);
       var $77=$76;
-      var $78=HEAP32[(($77)>>2)];
+      var $78=HEAP[$77];
       var $79=$78 & -2049;
-      HEAP32[(($77)>>2)]=$79;
+      HEAP[$77]=$79;
       __label__ = 15; break;
     case 15: 
       __label__ = 17; break;
@@ -26009,9 +25876,9 @@ function _op_shr16($ctx, $src, $val) {
       var $83=(($82+4)|0);
       var $84=(($83+96)|0);
       var $85=$84;
-      var $86=HEAP32[(($85)>>2)];
+      var $86=HEAP[$85];
       var $87=$86 & -2049;
-      HEAP32[(($85)>>2)]=$87;
+      HEAP[$85]=$87;
       __label__ = 17; break;
     case 17: 
       var $89=$ret;
@@ -26024,18 +25891,18 @@ function _op_shr16($ctx, $src, $val) {
       var $95=(($94+4)|0);
       var $96=(($95+96)|0);
       var $97=$96;
-      var $98=HEAP32[(($97)>>2)];
+      var $98=HEAP[$97];
       var $99=$98 | 128;
-      HEAP32[(($97)>>2)]=$99;
+      HEAP[$97]=$99;
       __label__ = 20; break;
     case 19: 
       var $101=$2;
       var $102=(($101+4)|0);
       var $103=(($102+96)|0);
       var $104=$103;
-      var $105=HEAP32[(($104)>>2)];
+      var $105=HEAP[$104];
       var $106=$105 & -129;
-      HEAP32[(($104)>>2)]=$106;
+      HEAP[$104]=$106;
       __label__ = 20; break;
     case 20: 
       var $108=$ret;
@@ -26046,27 +25913,27 @@ function _op_shr16($ctx, $src, $val) {
       var $112=(($111+4)|0);
       var $113=(($112+96)|0);
       var $114=$113;
-      var $115=HEAP32[(($114)>>2)];
+      var $115=HEAP[$114];
       var $116=$115 | 64;
-      HEAP32[(($114)>>2)]=$116;
+      HEAP[$114]=$116;
       __label__ = 23; break;
     case 22: 
       var $118=$2;
       var $119=(($118+4)|0);
       var $120=(($119+96)|0);
       var $121=$120;
-      var $122=HEAP32[(($121)>>2)];
+      var $122=HEAP[$121];
       var $123=$122 & -65;
-      HEAP32[(($121)>>2)]=$123;
+      HEAP[$121]=$123;
       __label__ = 23; break;
     case 23: 
       var $125=$2;
       var $126=(($125+4)|0);
       var $127=(($126+96)|0);
       var $128=$127;
-      var $129=HEAP32[(($128)>>2)];
+      var $129=HEAP[$128];
       var $130=$129 & -17;
-      HEAP32[(($128)>>2)]=$130;
+      HEAP[$128]=$130;
       var $131=$ret;
       var $132=_softx86_parity16($131);
       var $133=(($132)|0)!=0;
@@ -26076,18 +25943,18 @@ function _op_shr16($ctx, $src, $val) {
       var $136=(($135+4)|0);
       var $137=(($136+96)|0);
       var $138=$137;
-      var $139=HEAP32[(($138)>>2)];
+      var $139=HEAP[$138];
       var $140=$139 | 4;
-      HEAP32[(($138)>>2)]=$140;
+      HEAP[$138]=$140;
       __label__ = 26; break;
     case 25: 
       var $142=$2;
       var $143=(($142+4)|0);
       var $144=(($143+96)|0);
       var $145=$144;
-      var $146=HEAP32[(($145)>>2)];
+      var $146=HEAP[$145];
       var $147=$146 & -5;
-      HEAP32[(($145)>>2)]=$147;
+      HEAP[$145]=$147;
       __label__ = 26; break;
     case 26: 
       var $149=$ret;
@@ -26134,7 +26001,7 @@ function _op_shr_cl_16($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAPU8[($10)];
+  var $11=HEAP[$10];
   var $12=(($11)&255);
   var $13=_op_shr16($3, $4, $12);
   ;
@@ -26162,7 +26029,7 @@ function _op_shr32($ctx, $src, $val) {
       var $5=$2;
       var $6=(($5+180)|0);
       var $7=(($6+2)|0);
-      var $8=HEAP8[($7)];
+      var $8=HEAP[$7];
       var $9=(($8 << 24) >> 24)!=0;
       if ($9) { __label__ = 2; break; } else { __label__ = 3; break; }
     case 2: 
@@ -26209,18 +26076,18 @@ function _op_shr32($ctx, $src, $val) {
       var $37=(($36+4)|0);
       var $38=(($37+96)|0);
       var $39=$38;
-      var $40=HEAP32[(($39)>>2)];
+      var $40=HEAP[$39];
       var $41=$40 | 1;
-      HEAP32[(($39)>>2)]=$41;
+      HEAP[$39]=$41;
       __label__ = 11; break;
     case 10: 
       var $43=$2;
       var $44=(($43+4)|0);
       var $45=(($44+96)|0);
       var $46=$45;
-      var $47=HEAP32[(($46)>>2)];
+      var $47=HEAP[$46];
       var $48=$47 & -2;
-      HEAP32[(($46)>>2)]=$48;
+      HEAP[$46]=$48;
       __label__ = 11; break;
     case 11: 
       var $50=$ret;
@@ -26239,18 +26106,18 @@ function _op_shr32($ctx, $src, $val) {
       var $60=(($59+4)|0);
       var $61=(($60+96)|0);
       var $62=$61;
-      var $63=HEAP32[(($62)>>2)];
+      var $63=HEAP[$62];
       var $64=$63 | 2048;
-      HEAP32[(($62)>>2)]=$64;
+      HEAP[$62]=$64;
       __label__ = 15; break;
     case 14: 
       var $66=$2;
       var $67=(($66+4)|0);
       var $68=(($67+96)|0);
       var $69=$68;
-      var $70=HEAP32[(($69)>>2)];
+      var $70=HEAP[$69];
       var $71=$70 & -2049;
-      HEAP32[(($69)>>2)]=$71;
+      HEAP[$69]=$71;
       __label__ = 15; break;
     case 15: 
       __label__ = 17; break;
@@ -26259,9 +26126,9 @@ function _op_shr32($ctx, $src, $val) {
       var $75=(($74+4)|0);
       var $76=(($75+96)|0);
       var $77=$76;
-      var $78=HEAP32[(($77)>>2)];
+      var $78=HEAP[$77];
       var $79=$78 & -2049;
-      HEAP32[(($77)>>2)]=$79;
+      HEAP[$77]=$79;
       __label__ = 17; break;
     case 17: 
       var $81=$ret;
@@ -26273,18 +26140,18 @@ function _op_shr32($ctx, $src, $val) {
       var $86=(($85+4)|0);
       var $87=(($86+96)|0);
       var $88=$87;
-      var $89=HEAP32[(($88)>>2)];
+      var $89=HEAP[$88];
       var $90=$89 | 128;
-      HEAP32[(($88)>>2)]=$90;
+      HEAP[$88]=$90;
       __label__ = 20; break;
     case 19: 
       var $92=$2;
       var $93=(($92+4)|0);
       var $94=(($93+96)|0);
       var $95=$94;
-      var $96=HEAP32[(($95)>>2)];
+      var $96=HEAP[$95];
       var $97=$96 & -129;
-      HEAP32[(($95)>>2)]=$97;
+      HEAP[$95]=$97;
       __label__ = 20; break;
     case 20: 
       var $99=$ret;
@@ -26295,27 +26162,27 @@ function _op_shr32($ctx, $src, $val) {
       var $103=(($102+4)|0);
       var $104=(($103+96)|0);
       var $105=$104;
-      var $106=HEAP32[(($105)>>2)];
+      var $106=HEAP[$105];
       var $107=$106 | 64;
-      HEAP32[(($105)>>2)]=$107;
+      HEAP[$105]=$107;
       __label__ = 23; break;
     case 22: 
       var $109=$2;
       var $110=(($109+4)|0);
       var $111=(($110+96)|0);
       var $112=$111;
-      var $113=HEAP32[(($112)>>2)];
+      var $113=HEAP[$112];
       var $114=$113 & -65;
-      HEAP32[(($112)>>2)]=$114;
+      HEAP[$112]=$114;
       __label__ = 23; break;
     case 23: 
       var $116=$2;
       var $117=(($116+4)|0);
       var $118=(($117+96)|0);
       var $119=$118;
-      var $120=HEAP32[(($119)>>2)];
+      var $120=HEAP[$119];
       var $121=$120 & -17;
-      HEAP32[(($119)>>2)]=$121;
+      HEAP[$119]=$121;
       var $122=$ret;
       var $123=_softx86_parity32($122);
       var $124=(($123)|0)!=0;
@@ -26325,18 +26192,18 @@ function _op_shr32($ctx, $src, $val) {
       var $127=(($126+4)|0);
       var $128=(($127+96)|0);
       var $129=$128;
-      var $130=HEAP32[(($129)>>2)];
+      var $130=HEAP[$129];
       var $131=$130 | 4;
-      HEAP32[(($129)>>2)]=$131;
+      HEAP[$129]=$131;
       __label__ = 26; break;
     case 25: 
       var $133=$2;
       var $134=(($133+4)|0);
       var $135=(($134+96)|0);
       var $136=$135;
-      var $137=HEAP32[(($136)>>2)];
+      var $137=HEAP[$136];
       var $138=$137 & -5;
-      HEAP32[(($136)>>2)]=$138;
+      HEAP[$136]=$138;
       __label__ = 26; break;
     case 26: 
       var $140=$ret;
@@ -26383,7 +26250,7 @@ function _op_shr_cl_32($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAPU8[($10)];
+  var $11=HEAP[$10];
   var $12=(($11)&255);
   var $13=_op_shr32($3, $4, $12);
   ;
@@ -26410,7 +26277,7 @@ function _op_shl8($ctx, $src, $val) {
       var $5=$2;
       var $6=(($5+180)|0);
       var $7=(($6+2)|0);
-      var $8=HEAP8[($7)];
+      var $8=HEAP[$7];
       var $9=(($8 << 24) >> 24)!=0;
       if ($9) { __label__ = 2; break; } else { __label__ = 3; break; }
     case 2: 
@@ -26460,18 +26327,18 @@ function _op_shl8($ctx, $src, $val) {
       var $41=(($40+4)|0);
       var $42=(($41+96)|0);
       var $43=$42;
-      var $44=HEAP32[(($43)>>2)];
+      var $44=HEAP[$43];
       var $45=$44 | 1;
-      HEAP32[(($43)>>2)]=$45;
+      HEAP[$43]=$45;
       __label__ = 11; break;
     case 10: 
       var $47=$2;
       var $48=(($47+4)|0);
       var $49=(($48+96)|0);
       var $50=$49;
-      var $51=HEAP32[(($50)>>2)];
+      var $51=HEAP[$50];
       var $52=$51 & -2;
-      HEAP32[(($50)>>2)]=$52;
+      HEAP[$50]=$52;
       __label__ = 11; break;
     case 11: 
       var $54=$ret;
@@ -26490,7 +26357,7 @@ function _op_shl8($ctx, $src, $val) {
       var $65=(($64+4)|0);
       var $66=(($65+96)|0);
       var $67=$66;
-      var $68=HEAPU32[(($67)>>2)];
+      var $68=HEAP[$67];
       var $69=$68 >>> 0;
       var $70=$69 & 1;
       var $71=$63 ^ $70;
@@ -26501,18 +26368,18 @@ function _op_shl8($ctx, $src, $val) {
       var $75=(($74+4)|0);
       var $76=(($75+96)|0);
       var $77=$76;
-      var $78=HEAP32[(($77)>>2)];
+      var $78=HEAP[$77];
       var $79=$78 | 2048;
-      HEAP32[(($77)>>2)]=$79;
+      HEAP[$77]=$79;
       __label__ = 15; break;
     case 14: 
       var $81=$2;
       var $82=(($81+4)|0);
       var $83=(($82+96)|0);
       var $84=$83;
-      var $85=HEAP32[(($84)>>2)];
+      var $85=HEAP[$84];
       var $86=$85 & -2049;
-      HEAP32[(($84)>>2)]=$86;
+      HEAP[$84]=$86;
       __label__ = 15; break;
     case 15: 
       __label__ = 17; break;
@@ -26521,9 +26388,9 @@ function _op_shl8($ctx, $src, $val) {
       var $90=(($89+4)|0);
       var $91=(($90+96)|0);
       var $92=$91;
-      var $93=HEAP32[(($92)>>2)];
+      var $93=HEAP[$92];
       var $94=$93 & -2049;
-      HEAP32[(($92)>>2)]=$94;
+      HEAP[$92]=$94;
       __label__ = 17; break;
     case 17: 
       var $96=$ret;
@@ -26536,18 +26403,18 @@ function _op_shl8($ctx, $src, $val) {
       var $102=(($101+4)|0);
       var $103=(($102+96)|0);
       var $104=$103;
-      var $105=HEAP32[(($104)>>2)];
+      var $105=HEAP[$104];
       var $106=$105 | 128;
-      HEAP32[(($104)>>2)]=$106;
+      HEAP[$104]=$106;
       __label__ = 20; break;
     case 19: 
       var $108=$2;
       var $109=(($108+4)|0);
       var $110=(($109+96)|0);
       var $111=$110;
-      var $112=HEAP32[(($111)>>2)];
+      var $112=HEAP[$111];
       var $113=$112 & -129;
-      HEAP32[(($111)>>2)]=$113;
+      HEAP[$111]=$113;
       __label__ = 20; break;
     case 20: 
       var $115=$ret;
@@ -26558,27 +26425,27 @@ function _op_shl8($ctx, $src, $val) {
       var $119=(($118+4)|0);
       var $120=(($119+96)|0);
       var $121=$120;
-      var $122=HEAP32[(($121)>>2)];
+      var $122=HEAP[$121];
       var $123=$122 | 64;
-      HEAP32[(($121)>>2)]=$123;
+      HEAP[$121]=$123;
       __label__ = 23; break;
     case 22: 
       var $125=$2;
       var $126=(($125+4)|0);
       var $127=(($126+96)|0);
       var $128=$127;
-      var $129=HEAP32[(($128)>>2)];
+      var $129=HEAP[$128];
       var $130=$129 & -65;
-      HEAP32[(($128)>>2)]=$130;
+      HEAP[$128]=$130;
       __label__ = 23; break;
     case 23: 
       var $132=$2;
       var $133=(($132+4)|0);
       var $134=(($133+96)|0);
       var $135=$134;
-      var $136=HEAP32[(($135)>>2)];
+      var $136=HEAP[$135];
       var $137=$136 & -17;
-      HEAP32[(($135)>>2)]=$137;
+      HEAP[$135]=$137;
       var $138=$ret;
       var $139=_softx86_parity8($138);
       var $140=(($139)|0)!=0;
@@ -26588,18 +26455,18 @@ function _op_shl8($ctx, $src, $val) {
       var $143=(($142+4)|0);
       var $144=(($143+96)|0);
       var $145=$144;
-      var $146=HEAP32[(($145)>>2)];
+      var $146=HEAP[$145];
       var $147=$146 | 4;
-      HEAP32[(($145)>>2)]=$147;
+      HEAP[$145]=$147;
       __label__ = 26; break;
     case 25: 
       var $149=$2;
       var $150=(($149+4)|0);
       var $151=(($150+96)|0);
       var $152=$151;
-      var $153=HEAP32[(($152)>>2)];
+      var $153=HEAP[$152];
       var $154=$153 & -5;
-      HEAP32[(($152)>>2)]=$154;
+      HEAP[$152]=$154;
       __label__ = 26; break;
     case 26: 
       var $156=$ret;
@@ -26646,7 +26513,7 @@ function _op_shl_cl_8($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAP8[($10)];
+  var $11=HEAP[$10];
   var $12=_op_shl8($3, $4, $11);
   ;
   return $12;
@@ -26672,7 +26539,7 @@ function _op_shl16($ctx, $src, $val) {
       var $5=$2;
       var $6=(($5+180)|0);
       var $7=(($6+2)|0);
-      var $8=HEAP8[($7)];
+      var $8=HEAP[$7];
       var $9=(($8 << 24) >> 24)!=0;
       if ($9) { __label__ = 2; break; } else { __label__ = 3; break; }
     case 2: 
@@ -26722,18 +26589,18 @@ function _op_shl16($ctx, $src, $val) {
       var $41=(($40+4)|0);
       var $42=(($41+96)|0);
       var $43=$42;
-      var $44=HEAP32[(($43)>>2)];
+      var $44=HEAP[$43];
       var $45=$44 | 1;
-      HEAP32[(($43)>>2)]=$45;
+      HEAP[$43]=$45;
       __label__ = 11; break;
     case 10: 
       var $47=$2;
       var $48=(($47+4)|0);
       var $49=(($48+96)|0);
       var $50=$49;
-      var $51=HEAP32[(($50)>>2)];
+      var $51=HEAP[$50];
       var $52=$51 & -2;
-      HEAP32[(($50)>>2)]=$52;
+      HEAP[$50]=$52;
       __label__ = 11; break;
     case 11: 
       var $54=$ret;
@@ -26752,7 +26619,7 @@ function _op_shl16($ctx, $src, $val) {
       var $65=(($64+4)|0);
       var $66=(($65+96)|0);
       var $67=$66;
-      var $68=HEAPU32[(($67)>>2)];
+      var $68=HEAP[$67];
       var $69=$68 >>> 0;
       var $70=$69 & 1;
       var $71=$63 ^ $70;
@@ -26763,18 +26630,18 @@ function _op_shl16($ctx, $src, $val) {
       var $75=(($74+4)|0);
       var $76=(($75+96)|0);
       var $77=$76;
-      var $78=HEAP32[(($77)>>2)];
+      var $78=HEAP[$77];
       var $79=$78 | 2048;
-      HEAP32[(($77)>>2)]=$79;
+      HEAP[$77]=$79;
       __label__ = 15; break;
     case 14: 
       var $81=$2;
       var $82=(($81+4)|0);
       var $83=(($82+96)|0);
       var $84=$83;
-      var $85=HEAP32[(($84)>>2)];
+      var $85=HEAP[$84];
       var $86=$85 & -2049;
-      HEAP32[(($84)>>2)]=$86;
+      HEAP[$84]=$86;
       __label__ = 15; break;
     case 15: 
       __label__ = 17; break;
@@ -26783,9 +26650,9 @@ function _op_shl16($ctx, $src, $val) {
       var $90=(($89+4)|0);
       var $91=(($90+96)|0);
       var $92=$91;
-      var $93=HEAP32[(($92)>>2)];
+      var $93=HEAP[$92];
       var $94=$93 & -2049;
-      HEAP32[(($92)>>2)]=$94;
+      HEAP[$92]=$94;
       __label__ = 17; break;
     case 17: 
       var $96=$ret;
@@ -26798,18 +26665,18 @@ function _op_shl16($ctx, $src, $val) {
       var $102=(($101+4)|0);
       var $103=(($102+96)|0);
       var $104=$103;
-      var $105=HEAP32[(($104)>>2)];
+      var $105=HEAP[$104];
       var $106=$105 | 128;
-      HEAP32[(($104)>>2)]=$106;
+      HEAP[$104]=$106;
       __label__ = 20; break;
     case 19: 
       var $108=$2;
       var $109=(($108+4)|0);
       var $110=(($109+96)|0);
       var $111=$110;
-      var $112=HEAP32[(($111)>>2)];
+      var $112=HEAP[$111];
       var $113=$112 & -129;
-      HEAP32[(($111)>>2)]=$113;
+      HEAP[$111]=$113;
       __label__ = 20; break;
     case 20: 
       var $115=$ret;
@@ -26820,27 +26687,27 @@ function _op_shl16($ctx, $src, $val) {
       var $119=(($118+4)|0);
       var $120=(($119+96)|0);
       var $121=$120;
-      var $122=HEAP32[(($121)>>2)];
+      var $122=HEAP[$121];
       var $123=$122 | 64;
-      HEAP32[(($121)>>2)]=$123;
+      HEAP[$121]=$123;
       __label__ = 23; break;
     case 22: 
       var $125=$2;
       var $126=(($125+4)|0);
       var $127=(($126+96)|0);
       var $128=$127;
-      var $129=HEAP32[(($128)>>2)];
+      var $129=HEAP[$128];
       var $130=$129 & -65;
-      HEAP32[(($128)>>2)]=$130;
+      HEAP[$128]=$130;
       __label__ = 23; break;
     case 23: 
       var $132=$2;
       var $133=(($132+4)|0);
       var $134=(($133+96)|0);
       var $135=$134;
-      var $136=HEAP32[(($135)>>2)];
+      var $136=HEAP[$135];
       var $137=$136 & -17;
-      HEAP32[(($135)>>2)]=$137;
+      HEAP[$135]=$137;
       var $138=$ret;
       var $139=_softx86_parity16($138);
       var $140=(($139)|0)!=0;
@@ -26850,18 +26717,18 @@ function _op_shl16($ctx, $src, $val) {
       var $143=(($142+4)|0);
       var $144=(($143+96)|0);
       var $145=$144;
-      var $146=HEAP32[(($145)>>2)];
+      var $146=HEAP[$145];
       var $147=$146 | 4;
-      HEAP32[(($145)>>2)]=$147;
+      HEAP[$145]=$147;
       __label__ = 26; break;
     case 25: 
       var $149=$2;
       var $150=(($149+4)|0);
       var $151=(($150+96)|0);
       var $152=$151;
-      var $153=HEAP32[(($152)>>2)];
+      var $153=HEAP[$152];
       var $154=$153 & -5;
-      HEAP32[(($152)>>2)]=$154;
+      HEAP[$152]=$154;
       __label__ = 26; break;
     case 26: 
       var $156=$ret;
@@ -26908,7 +26775,7 @@ function _op_shl_cl_16($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAPU8[($10)];
+  var $11=HEAP[$10];
   var $12=(($11)&255);
   var $13=_op_shl16($3, $4, $12);
   ;
@@ -26935,7 +26802,7 @@ function _op_shl32($ctx, $src, $val) {
       var $5=$2;
       var $6=(($5+180)|0);
       var $7=(($6+2)|0);
-      var $8=HEAP8[($7)];
+      var $8=HEAP[$7];
       var $9=(($8 << 24) >> 24)!=0;
       if ($9) { __label__ = 2; break; } else { __label__ = 3; break; }
     case 2: 
@@ -26980,18 +26847,18 @@ function _op_shl32($ctx, $src, $val) {
       var $36=(($35+4)|0);
       var $37=(($36+96)|0);
       var $38=$37;
-      var $39=HEAP32[(($38)>>2)];
+      var $39=HEAP[$38];
       var $40=$39 | 1;
-      HEAP32[(($38)>>2)]=$40;
+      HEAP[$38]=$40;
       __label__ = 11; break;
     case 10: 
       var $42=$2;
       var $43=(($42+4)|0);
       var $44=(($43+96)|0);
       var $45=$44;
-      var $46=HEAP32[(($45)>>2)];
+      var $46=HEAP[$45];
       var $47=$46 & -2;
-      HEAP32[(($45)>>2)]=$47;
+      HEAP[$45]=$47;
       __label__ = 11; break;
     case 11: 
       var $49=$ret;
@@ -27007,7 +26874,7 @@ function _op_shl32($ctx, $src, $val) {
       var $57=(($56+4)|0);
       var $58=(($57+96)|0);
       var $59=$58;
-      var $60=HEAPU32[(($59)>>2)];
+      var $60=HEAP[$59];
       var $61=$60 >>> 0;
       var $62=$61 & 1;
       var $63=$55 ^ $62;
@@ -27018,18 +26885,18 @@ function _op_shl32($ctx, $src, $val) {
       var $67=(($66+4)|0);
       var $68=(($67+96)|0);
       var $69=$68;
-      var $70=HEAP32[(($69)>>2)];
+      var $70=HEAP[$69];
       var $71=$70 | 2048;
-      HEAP32[(($69)>>2)]=$71;
+      HEAP[$69]=$71;
       __label__ = 15; break;
     case 14: 
       var $73=$2;
       var $74=(($73+4)|0);
       var $75=(($74+96)|0);
       var $76=$75;
-      var $77=HEAP32[(($76)>>2)];
+      var $77=HEAP[$76];
       var $78=$77 & -2049;
-      HEAP32[(($76)>>2)]=$78;
+      HEAP[$76]=$78;
       __label__ = 15; break;
     case 15: 
       __label__ = 17; break;
@@ -27038,9 +26905,9 @@ function _op_shl32($ctx, $src, $val) {
       var $82=(($81+4)|0);
       var $83=(($82+96)|0);
       var $84=$83;
-      var $85=HEAP32[(($84)>>2)];
+      var $85=HEAP[$84];
       var $86=$85 & -2049;
-      HEAP32[(($84)>>2)]=$86;
+      HEAP[$84]=$86;
       __label__ = 17; break;
     case 17: 
       var $88=$ret;
@@ -27052,18 +26919,18 @@ function _op_shl32($ctx, $src, $val) {
       var $93=(($92+4)|0);
       var $94=(($93+96)|0);
       var $95=$94;
-      var $96=HEAP32[(($95)>>2)];
+      var $96=HEAP[$95];
       var $97=$96 | 128;
-      HEAP32[(($95)>>2)]=$97;
+      HEAP[$95]=$97;
       __label__ = 20; break;
     case 19: 
       var $99=$2;
       var $100=(($99+4)|0);
       var $101=(($100+96)|0);
       var $102=$101;
-      var $103=HEAP32[(($102)>>2)];
+      var $103=HEAP[$102];
       var $104=$103 & -129;
-      HEAP32[(($102)>>2)]=$104;
+      HEAP[$102]=$104;
       __label__ = 20; break;
     case 20: 
       var $106=$ret;
@@ -27074,27 +26941,27 @@ function _op_shl32($ctx, $src, $val) {
       var $110=(($109+4)|0);
       var $111=(($110+96)|0);
       var $112=$111;
-      var $113=HEAP32[(($112)>>2)];
+      var $113=HEAP[$112];
       var $114=$113 | 64;
-      HEAP32[(($112)>>2)]=$114;
+      HEAP[$112]=$114;
       __label__ = 23; break;
     case 22: 
       var $116=$2;
       var $117=(($116+4)|0);
       var $118=(($117+96)|0);
       var $119=$118;
-      var $120=HEAP32[(($119)>>2)];
+      var $120=HEAP[$119];
       var $121=$120 & -65;
-      HEAP32[(($119)>>2)]=$121;
+      HEAP[$119]=$121;
       __label__ = 23; break;
     case 23: 
       var $123=$2;
       var $124=(($123+4)|0);
       var $125=(($124+96)|0);
       var $126=$125;
-      var $127=HEAP32[(($126)>>2)];
+      var $127=HEAP[$126];
       var $128=$127 & -17;
-      HEAP32[(($126)>>2)]=$128;
+      HEAP[$126]=$128;
       var $129=$ret;
       var $130=_softx86_parity32($129);
       var $131=(($130)|0)!=0;
@@ -27104,18 +26971,18 @@ function _op_shl32($ctx, $src, $val) {
       var $134=(($133+4)|0);
       var $135=(($134+96)|0);
       var $136=$135;
-      var $137=HEAP32[(($136)>>2)];
+      var $137=HEAP[$136];
       var $138=$137 | 4;
-      HEAP32[(($136)>>2)]=$138;
+      HEAP[$136]=$138;
       __label__ = 26; break;
     case 25: 
       var $140=$2;
       var $141=(($140+4)|0);
       var $142=(($141+96)|0);
       var $143=$142;
-      var $144=HEAP32[(($143)>>2)];
+      var $144=HEAP[$143];
       var $145=$144 & -5;
-      HEAP32[(($143)>>2)]=$145;
+      HEAP[$143]=$145;
       __label__ = 26; break;
     case 26: 
       var $147=$ret;
@@ -27162,7 +27029,7 @@ function _op_shl_cl_32($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAPU8[($10)];
+  var $11=HEAP[$10];
   var $12=(($11)&255);
   var $13=_op_shl32($3, $4, $12);
   ;
@@ -27222,18 +27089,18 @@ function _op_ror8($ctx, $src, $val) {
       var $31=(($30+4)|0);
       var $32=(($31+96)|0);
       var $33=$32;
-      var $34=HEAP32[(($33)>>2)];
+      var $34=HEAP[$33];
       var $35=$34 | 1;
-      HEAP32[(($33)>>2)]=$35;
+      HEAP[$33]=$35;
       __label__ = 6; break;
     case 5: 
       var $37=$2;
       var $38=(($37+4)|0);
       var $39=(($38+96)|0);
       var $40=$39;
-      var $41=HEAP32[(($40)>>2)];
+      var $41=HEAP[$40];
       var $42=$41 & -2;
-      HEAP32[(($40)>>2)]=$42;
+      HEAP[$40]=$42;
       __label__ = 6; break;
     case 6: 
       var $44=$oshic;
@@ -27255,18 +27122,18 @@ function _op_ror8($ctx, $src, $val) {
       var $58=(($57+4)|0);
       var $59=(($58+96)|0);
       var $60=$59;
-      var $61=HEAP32[(($60)>>2)];
+      var $61=HEAP[$60];
       var $62=$61 | 2048;
-      HEAP32[(($60)>>2)]=$62;
+      HEAP[$60]=$62;
       __label__ = 10; break;
     case 9: 
       var $64=$2;
       var $65=(($64+4)|0);
       var $66=(($65+96)|0);
       var $67=$66;
-      var $68=HEAP32[(($67)>>2)];
+      var $68=HEAP[$67];
       var $69=$68 & -2049;
-      HEAP32[(($67)>>2)]=$69;
+      HEAP[$67]=$69;
       __label__ = 10; break;
     case 10: 
       __label__ = 12; break;
@@ -27275,9 +27142,9 @@ function _op_ror8($ctx, $src, $val) {
       var $73=(($72+4)|0);
       var $74=(($73+96)|0);
       var $75=$74;
-      var $76=HEAP32[(($75)>>2)];
+      var $76=HEAP[$75];
       var $77=$76 & -2049;
-      HEAP32[(($75)>>2)]=$77;
+      HEAP[$75]=$77;
       __label__ = 12; break;
     case 12: 
       var $79=$ret;
@@ -27290,18 +27157,18 @@ function _op_ror8($ctx, $src, $val) {
       var $85=(($84+4)|0);
       var $86=(($85+96)|0);
       var $87=$86;
-      var $88=HEAP32[(($87)>>2)];
+      var $88=HEAP[$87];
       var $89=$88 | 128;
-      HEAP32[(($87)>>2)]=$89;
+      HEAP[$87]=$89;
       __label__ = 15; break;
     case 14: 
       var $91=$2;
       var $92=(($91+4)|0);
       var $93=(($92+96)|0);
       var $94=$93;
-      var $95=HEAP32[(($94)>>2)];
+      var $95=HEAP[$94];
       var $96=$95 & -129;
-      HEAP32[(($94)>>2)]=$96;
+      HEAP[$94]=$96;
       __label__ = 15; break;
     case 15: 
       var $98=$ret;
@@ -27312,27 +27179,27 @@ function _op_ror8($ctx, $src, $val) {
       var $102=(($101+4)|0);
       var $103=(($102+96)|0);
       var $104=$103;
-      var $105=HEAP32[(($104)>>2)];
+      var $105=HEAP[$104];
       var $106=$105 | 64;
-      HEAP32[(($104)>>2)]=$106;
+      HEAP[$104]=$106;
       __label__ = 18; break;
     case 17: 
       var $108=$2;
       var $109=(($108+4)|0);
       var $110=(($109+96)|0);
       var $111=$110;
-      var $112=HEAP32[(($111)>>2)];
+      var $112=HEAP[$111];
       var $113=$112 & -65;
-      HEAP32[(($111)>>2)]=$113;
+      HEAP[$111]=$113;
       __label__ = 18; break;
     case 18: 
       var $115=$2;
       var $116=(($115+4)|0);
       var $117=(($116+96)|0);
       var $118=$117;
-      var $119=HEAP32[(($118)>>2)];
+      var $119=HEAP[$118];
       var $120=$119 & -17;
-      HEAP32[(($118)>>2)]=$120;
+      HEAP[$118]=$120;
       var $121=$ret;
       var $122=_softx86_parity8($121);
       var $123=(($122)|0)!=0;
@@ -27342,18 +27209,18 @@ function _op_ror8($ctx, $src, $val) {
       var $126=(($125+4)|0);
       var $127=(($126+96)|0);
       var $128=$127;
-      var $129=HEAP32[(($128)>>2)];
+      var $129=HEAP[$128];
       var $130=$129 | 4;
-      HEAP32[(($128)>>2)]=$130;
+      HEAP[$128]=$130;
       __label__ = 21; break;
     case 20: 
       var $132=$2;
       var $133=(($132+4)|0);
       var $134=(($133+96)|0);
       var $135=$134;
-      var $136=HEAP32[(($135)>>2)];
+      var $136=HEAP[$135];
       var $137=$136 & -5;
-      HEAP32[(($135)>>2)]=$137;
+      HEAP[$135]=$137;
       __label__ = 21; break;
     case 21: 
       var $139=$ret;
@@ -27400,7 +27267,7 @@ function _op_ror_cl_8($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAP8[($10)];
+  var $11=HEAP[$10];
   var $12=_op_ror8($3, $4, $11);
   ;
   return $12;
@@ -27459,18 +27326,18 @@ function _op_ror16($ctx, $src, $val) {
       var $31=(($30+4)|0);
       var $32=(($31+96)|0);
       var $33=$32;
-      var $34=HEAP32[(($33)>>2)];
+      var $34=HEAP[$33];
       var $35=$34 | 1;
-      HEAP32[(($33)>>2)]=$35;
+      HEAP[$33]=$35;
       __label__ = 6; break;
     case 5: 
       var $37=$2;
       var $38=(($37+4)|0);
       var $39=(($38+96)|0);
       var $40=$39;
-      var $41=HEAP32[(($40)>>2)];
+      var $41=HEAP[$40];
       var $42=$41 & -2;
-      HEAP32[(($40)>>2)]=$42;
+      HEAP[$40]=$42;
       __label__ = 6; break;
     case 6: 
       var $44=$oshic;
@@ -27492,18 +27359,18 @@ function _op_ror16($ctx, $src, $val) {
       var $58=(($57+4)|0);
       var $59=(($58+96)|0);
       var $60=$59;
-      var $61=HEAP32[(($60)>>2)];
+      var $61=HEAP[$60];
       var $62=$61 | 2048;
-      HEAP32[(($60)>>2)]=$62;
+      HEAP[$60]=$62;
       __label__ = 10; break;
     case 9: 
       var $64=$2;
       var $65=(($64+4)|0);
       var $66=(($65+96)|0);
       var $67=$66;
-      var $68=HEAP32[(($67)>>2)];
+      var $68=HEAP[$67];
       var $69=$68 & -2049;
-      HEAP32[(($67)>>2)]=$69;
+      HEAP[$67]=$69;
       __label__ = 10; break;
     case 10: 
       __label__ = 12; break;
@@ -27512,9 +27379,9 @@ function _op_ror16($ctx, $src, $val) {
       var $73=(($72+4)|0);
       var $74=(($73+96)|0);
       var $75=$74;
-      var $76=HEAP32[(($75)>>2)];
+      var $76=HEAP[$75];
       var $77=$76 & -2049;
-      HEAP32[(($75)>>2)]=$77;
+      HEAP[$75]=$77;
       __label__ = 12; break;
     case 12: 
       var $79=$ret;
@@ -27527,18 +27394,18 @@ function _op_ror16($ctx, $src, $val) {
       var $85=(($84+4)|0);
       var $86=(($85+96)|0);
       var $87=$86;
-      var $88=HEAP32[(($87)>>2)];
+      var $88=HEAP[$87];
       var $89=$88 | 128;
-      HEAP32[(($87)>>2)]=$89;
+      HEAP[$87]=$89;
       __label__ = 15; break;
     case 14: 
       var $91=$2;
       var $92=(($91+4)|0);
       var $93=(($92+96)|0);
       var $94=$93;
-      var $95=HEAP32[(($94)>>2)];
+      var $95=HEAP[$94];
       var $96=$95 & -129;
-      HEAP32[(($94)>>2)]=$96;
+      HEAP[$94]=$96;
       __label__ = 15; break;
     case 15: 
       var $98=$ret;
@@ -27549,27 +27416,27 @@ function _op_ror16($ctx, $src, $val) {
       var $102=(($101+4)|0);
       var $103=(($102+96)|0);
       var $104=$103;
-      var $105=HEAP32[(($104)>>2)];
+      var $105=HEAP[$104];
       var $106=$105 | 64;
-      HEAP32[(($104)>>2)]=$106;
+      HEAP[$104]=$106;
       __label__ = 18; break;
     case 17: 
       var $108=$2;
       var $109=(($108+4)|0);
       var $110=(($109+96)|0);
       var $111=$110;
-      var $112=HEAP32[(($111)>>2)];
+      var $112=HEAP[$111];
       var $113=$112 & -65;
-      HEAP32[(($111)>>2)]=$113;
+      HEAP[$111]=$113;
       __label__ = 18; break;
     case 18: 
       var $115=$2;
       var $116=(($115+4)|0);
       var $117=(($116+96)|0);
       var $118=$117;
-      var $119=HEAP32[(($118)>>2)];
+      var $119=HEAP[$118];
       var $120=$119 & -17;
-      HEAP32[(($118)>>2)]=$120;
+      HEAP[$118]=$120;
       var $121=$ret;
       var $122=_softx86_parity16($121);
       var $123=(($122)|0)!=0;
@@ -27579,18 +27446,18 @@ function _op_ror16($ctx, $src, $val) {
       var $126=(($125+4)|0);
       var $127=(($126+96)|0);
       var $128=$127;
-      var $129=HEAP32[(($128)>>2)];
+      var $129=HEAP[$128];
       var $130=$129 | 4;
-      HEAP32[(($128)>>2)]=$130;
+      HEAP[$128]=$130;
       __label__ = 21; break;
     case 20: 
       var $132=$2;
       var $133=(($132+4)|0);
       var $134=(($133+96)|0);
       var $135=$134;
-      var $136=HEAP32[(($135)>>2)];
+      var $136=HEAP[$135];
       var $137=$136 & -5;
-      HEAP32[(($135)>>2)]=$137;
+      HEAP[$135]=$137;
       __label__ = 21; break;
     case 21: 
       var $139=$ret;
@@ -27637,7 +27504,7 @@ function _op_ror_cl_16($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAPU8[($10)];
+  var $11=HEAP[$10];
   var $12=(($11)&255);
   var $13=_op_ror16($3, $4, $12);
   ;
@@ -27692,18 +27559,18 @@ function _op_ror32($ctx, $src, $val) {
       var $26=(($25+4)|0);
       var $27=(($26+96)|0);
       var $28=$27;
-      var $29=HEAP32[(($28)>>2)];
+      var $29=HEAP[$28];
       var $30=$29 | 1;
-      HEAP32[(($28)>>2)]=$30;
+      HEAP[$28]=$30;
       __label__ = 6; break;
     case 5: 
       var $32=$2;
       var $33=(($32+4)|0);
       var $34=(($33+96)|0);
       var $35=$34;
-      var $36=HEAP32[(($35)>>2)];
+      var $36=HEAP[$35];
       var $37=$36 & -2;
-      HEAP32[(($35)>>2)]=$37;
+      HEAP[$35]=$37;
       __label__ = 6; break;
     case 6: 
       var $39=$oshic;
@@ -27723,18 +27590,18 @@ function _op_ror32($ctx, $src, $val) {
       var $51=(($50+4)|0);
       var $52=(($51+96)|0);
       var $53=$52;
-      var $54=HEAP32[(($53)>>2)];
+      var $54=HEAP[$53];
       var $55=$54 | 2048;
-      HEAP32[(($53)>>2)]=$55;
+      HEAP[$53]=$55;
       __label__ = 10; break;
     case 9: 
       var $57=$2;
       var $58=(($57+4)|0);
       var $59=(($58+96)|0);
       var $60=$59;
-      var $61=HEAP32[(($60)>>2)];
+      var $61=HEAP[$60];
       var $62=$61 & -2049;
-      HEAP32[(($60)>>2)]=$62;
+      HEAP[$60]=$62;
       __label__ = 10; break;
     case 10: 
       __label__ = 12; break;
@@ -27743,9 +27610,9 @@ function _op_ror32($ctx, $src, $val) {
       var $66=(($65+4)|0);
       var $67=(($66+96)|0);
       var $68=$67;
-      var $69=HEAP32[(($68)>>2)];
+      var $69=HEAP[$68];
       var $70=$69 & -2049;
-      HEAP32[(($68)>>2)]=$70;
+      HEAP[$68]=$70;
       __label__ = 12; break;
     case 12: 
       var $72=$ret;
@@ -27757,18 +27624,18 @@ function _op_ror32($ctx, $src, $val) {
       var $77=(($76+4)|0);
       var $78=(($77+96)|0);
       var $79=$78;
-      var $80=HEAP32[(($79)>>2)];
+      var $80=HEAP[$79];
       var $81=$80 | 128;
-      HEAP32[(($79)>>2)]=$81;
+      HEAP[$79]=$81;
       __label__ = 15; break;
     case 14: 
       var $83=$2;
       var $84=(($83+4)|0);
       var $85=(($84+96)|0);
       var $86=$85;
-      var $87=HEAP32[(($86)>>2)];
+      var $87=HEAP[$86];
       var $88=$87 & -129;
-      HEAP32[(($86)>>2)]=$88;
+      HEAP[$86]=$88;
       __label__ = 15; break;
     case 15: 
       var $90=$ret;
@@ -27779,27 +27646,27 @@ function _op_ror32($ctx, $src, $val) {
       var $94=(($93+4)|0);
       var $95=(($94+96)|0);
       var $96=$95;
-      var $97=HEAP32[(($96)>>2)];
+      var $97=HEAP[$96];
       var $98=$97 | 64;
-      HEAP32[(($96)>>2)]=$98;
+      HEAP[$96]=$98;
       __label__ = 18; break;
     case 17: 
       var $100=$2;
       var $101=(($100+4)|0);
       var $102=(($101+96)|0);
       var $103=$102;
-      var $104=HEAP32[(($103)>>2)];
+      var $104=HEAP[$103];
       var $105=$104 & -65;
-      HEAP32[(($103)>>2)]=$105;
+      HEAP[$103]=$105;
       __label__ = 18; break;
     case 18: 
       var $107=$2;
       var $108=(($107+4)|0);
       var $109=(($108+96)|0);
       var $110=$109;
-      var $111=HEAP32[(($110)>>2)];
+      var $111=HEAP[$110];
       var $112=$111 & -17;
-      HEAP32[(($110)>>2)]=$112;
+      HEAP[$110]=$112;
       var $113=$ret;
       var $114=_softx86_parity32($113);
       var $115=(($114)|0)!=0;
@@ -27809,18 +27676,18 @@ function _op_ror32($ctx, $src, $val) {
       var $118=(($117+4)|0);
       var $119=(($118+96)|0);
       var $120=$119;
-      var $121=HEAP32[(($120)>>2)];
+      var $121=HEAP[$120];
       var $122=$121 | 4;
-      HEAP32[(($120)>>2)]=$122;
+      HEAP[$120]=$122;
       __label__ = 21; break;
     case 20: 
       var $124=$2;
       var $125=(($124+4)|0);
       var $126=(($125+96)|0);
       var $127=$126;
-      var $128=HEAP32[(($127)>>2)];
+      var $128=HEAP[$127];
       var $129=$128 & -5;
-      HEAP32[(($127)>>2)]=$129;
+      HEAP[$127]=$129;
       __label__ = 21; break;
     case 21: 
       var $131=$ret;
@@ -27867,7 +27734,7 @@ function _op_ror_cl_32($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAPU8[($10)];
+  var $11=HEAP[$10];
   var $12=(($11)&255);
   var $13=_op_ror32($3, $4, $12);
   ;
@@ -27927,18 +27794,18 @@ function _op_rol8($ctx, $src, $val) {
       var $31=(($30+4)|0);
       var $32=(($31+96)|0);
       var $33=$32;
-      var $34=HEAP32[(($33)>>2)];
+      var $34=HEAP[$33];
       var $35=$34 | 1;
-      HEAP32[(($33)>>2)]=$35;
+      HEAP[$33]=$35;
       __label__ = 6; break;
     case 5: 
       var $37=$2;
       var $38=(($37+4)|0);
       var $39=(($38+96)|0);
       var $40=$39;
-      var $41=HEAP32[(($40)>>2)];
+      var $41=HEAP[$40];
       var $42=$41 & -2;
-      HEAP32[(($40)>>2)]=$42;
+      HEAP[$40]=$42;
       __label__ = 6; break;
     case 6: 
       var $44=$oshic;
@@ -27952,7 +27819,7 @@ function _op_rol8($ctx, $src, $val) {
       var $51=(($50+4)|0);
       var $52=(($51+96)|0);
       var $53=$52;
-      var $54=HEAPU32[(($53)>>2)];
+      var $54=HEAP[$53];
       var $55=$54 >>> 0;
       var $56=$55 & 1;
       var $57=$49 ^ $56;
@@ -27963,18 +27830,18 @@ function _op_rol8($ctx, $src, $val) {
       var $61=(($60+4)|0);
       var $62=(($61+96)|0);
       var $63=$62;
-      var $64=HEAP32[(($63)>>2)];
+      var $64=HEAP[$63];
       var $65=$64 | 2048;
-      HEAP32[(($63)>>2)]=$65;
+      HEAP[$63]=$65;
       __label__ = 10; break;
     case 9: 
       var $67=$2;
       var $68=(($67+4)|0);
       var $69=(($68+96)|0);
       var $70=$69;
-      var $71=HEAP32[(($70)>>2)];
+      var $71=HEAP[$70];
       var $72=$71 & -2049;
-      HEAP32[(($70)>>2)]=$72;
+      HEAP[$70]=$72;
       __label__ = 10; break;
     case 10: 
       __label__ = 12; break;
@@ -27983,9 +27850,9 @@ function _op_rol8($ctx, $src, $val) {
       var $76=(($75+4)|0);
       var $77=(($76+96)|0);
       var $78=$77;
-      var $79=HEAP32[(($78)>>2)];
+      var $79=HEAP[$78];
       var $80=$79 & -2049;
-      HEAP32[(($78)>>2)]=$80;
+      HEAP[$78]=$80;
       __label__ = 12; break;
     case 12: 
       var $82=$ret;
@@ -27998,18 +27865,18 @@ function _op_rol8($ctx, $src, $val) {
       var $88=(($87+4)|0);
       var $89=(($88+96)|0);
       var $90=$89;
-      var $91=HEAP32[(($90)>>2)];
+      var $91=HEAP[$90];
       var $92=$91 | 128;
-      HEAP32[(($90)>>2)]=$92;
+      HEAP[$90]=$92;
       __label__ = 15; break;
     case 14: 
       var $94=$2;
       var $95=(($94+4)|0);
       var $96=(($95+96)|0);
       var $97=$96;
-      var $98=HEAP32[(($97)>>2)];
+      var $98=HEAP[$97];
       var $99=$98 & -129;
-      HEAP32[(($97)>>2)]=$99;
+      HEAP[$97]=$99;
       __label__ = 15; break;
     case 15: 
       var $101=$ret;
@@ -28020,27 +27887,27 @@ function _op_rol8($ctx, $src, $val) {
       var $105=(($104+4)|0);
       var $106=(($105+96)|0);
       var $107=$106;
-      var $108=HEAP32[(($107)>>2)];
+      var $108=HEAP[$107];
       var $109=$108 | 64;
-      HEAP32[(($107)>>2)]=$109;
+      HEAP[$107]=$109;
       __label__ = 18; break;
     case 17: 
       var $111=$2;
       var $112=(($111+4)|0);
       var $113=(($112+96)|0);
       var $114=$113;
-      var $115=HEAP32[(($114)>>2)];
+      var $115=HEAP[$114];
       var $116=$115 & -65;
-      HEAP32[(($114)>>2)]=$116;
+      HEAP[$114]=$116;
       __label__ = 18; break;
     case 18: 
       var $118=$2;
       var $119=(($118+4)|0);
       var $120=(($119+96)|0);
       var $121=$120;
-      var $122=HEAP32[(($121)>>2)];
+      var $122=HEAP[$121];
       var $123=$122 & -17;
-      HEAP32[(($121)>>2)]=$123;
+      HEAP[$121]=$123;
       var $124=$ret;
       var $125=_softx86_parity8($124);
       var $126=(($125)|0)!=0;
@@ -28050,18 +27917,18 @@ function _op_rol8($ctx, $src, $val) {
       var $129=(($128+4)|0);
       var $130=(($129+96)|0);
       var $131=$130;
-      var $132=HEAP32[(($131)>>2)];
+      var $132=HEAP[$131];
       var $133=$132 | 4;
-      HEAP32[(($131)>>2)]=$133;
+      HEAP[$131]=$133;
       __label__ = 21; break;
     case 20: 
       var $135=$2;
       var $136=(($135+4)|0);
       var $137=(($136+96)|0);
       var $138=$137;
-      var $139=HEAP32[(($138)>>2)];
+      var $139=HEAP[$138];
       var $140=$139 & -5;
-      HEAP32[(($138)>>2)]=$140;
+      HEAP[$138]=$140;
       __label__ = 21; break;
     case 21: 
       var $142=$ret;
@@ -28108,7 +27975,7 @@ function _op_rol_cl_8($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAP8[($10)];
+  var $11=HEAP[$10];
   var $12=_op_rol8($3, $4, $11);
   ;
   return $12;
@@ -28167,18 +28034,18 @@ function _op_rol16($ctx, $src, $val) {
       var $31=(($30+4)|0);
       var $32=(($31+96)|0);
       var $33=$32;
-      var $34=HEAP32[(($33)>>2)];
+      var $34=HEAP[$33];
       var $35=$34 | 1;
-      HEAP32[(($33)>>2)]=$35;
+      HEAP[$33]=$35;
       __label__ = 6; break;
     case 5: 
       var $37=$2;
       var $38=(($37+4)|0);
       var $39=(($38+96)|0);
       var $40=$39;
-      var $41=HEAP32[(($40)>>2)];
+      var $41=HEAP[$40];
       var $42=$41 & -2;
-      HEAP32[(($40)>>2)]=$42;
+      HEAP[$40]=$42;
       __label__ = 6; break;
     case 6: 
       var $44=$oshic;
@@ -28192,7 +28059,7 @@ function _op_rol16($ctx, $src, $val) {
       var $51=(($50+4)|0);
       var $52=(($51+96)|0);
       var $53=$52;
-      var $54=HEAPU32[(($53)>>2)];
+      var $54=HEAP[$53];
       var $55=$54 >>> 0;
       var $56=$55 & 1;
       var $57=$49 ^ $56;
@@ -28203,18 +28070,18 @@ function _op_rol16($ctx, $src, $val) {
       var $61=(($60+4)|0);
       var $62=(($61+96)|0);
       var $63=$62;
-      var $64=HEAP32[(($63)>>2)];
+      var $64=HEAP[$63];
       var $65=$64 | 2048;
-      HEAP32[(($63)>>2)]=$65;
+      HEAP[$63]=$65;
       __label__ = 10; break;
     case 9: 
       var $67=$2;
       var $68=(($67+4)|0);
       var $69=(($68+96)|0);
       var $70=$69;
-      var $71=HEAP32[(($70)>>2)];
+      var $71=HEAP[$70];
       var $72=$71 & -2049;
-      HEAP32[(($70)>>2)]=$72;
+      HEAP[$70]=$72;
       __label__ = 10; break;
     case 10: 
       __label__ = 12; break;
@@ -28223,9 +28090,9 @@ function _op_rol16($ctx, $src, $val) {
       var $76=(($75+4)|0);
       var $77=(($76+96)|0);
       var $78=$77;
-      var $79=HEAP32[(($78)>>2)];
+      var $79=HEAP[$78];
       var $80=$79 & -2049;
-      HEAP32[(($78)>>2)]=$80;
+      HEAP[$78]=$80;
       __label__ = 12; break;
     case 12: 
       var $82=$ret;
@@ -28238,18 +28105,18 @@ function _op_rol16($ctx, $src, $val) {
       var $88=(($87+4)|0);
       var $89=(($88+96)|0);
       var $90=$89;
-      var $91=HEAP32[(($90)>>2)];
+      var $91=HEAP[$90];
       var $92=$91 | 128;
-      HEAP32[(($90)>>2)]=$92;
+      HEAP[$90]=$92;
       __label__ = 15; break;
     case 14: 
       var $94=$2;
       var $95=(($94+4)|0);
       var $96=(($95+96)|0);
       var $97=$96;
-      var $98=HEAP32[(($97)>>2)];
+      var $98=HEAP[$97];
       var $99=$98 & -129;
-      HEAP32[(($97)>>2)]=$99;
+      HEAP[$97]=$99;
       __label__ = 15; break;
     case 15: 
       var $101=$ret;
@@ -28260,27 +28127,27 @@ function _op_rol16($ctx, $src, $val) {
       var $105=(($104+4)|0);
       var $106=(($105+96)|0);
       var $107=$106;
-      var $108=HEAP32[(($107)>>2)];
+      var $108=HEAP[$107];
       var $109=$108 | 64;
-      HEAP32[(($107)>>2)]=$109;
+      HEAP[$107]=$109;
       __label__ = 18; break;
     case 17: 
       var $111=$2;
       var $112=(($111+4)|0);
       var $113=(($112+96)|0);
       var $114=$113;
-      var $115=HEAP32[(($114)>>2)];
+      var $115=HEAP[$114];
       var $116=$115 & -65;
-      HEAP32[(($114)>>2)]=$116;
+      HEAP[$114]=$116;
       __label__ = 18; break;
     case 18: 
       var $118=$2;
       var $119=(($118+4)|0);
       var $120=(($119+96)|0);
       var $121=$120;
-      var $122=HEAP32[(($121)>>2)];
+      var $122=HEAP[$121];
       var $123=$122 & -17;
-      HEAP32[(($121)>>2)]=$123;
+      HEAP[$121]=$123;
       var $124=$ret;
       var $125=_softx86_parity16($124);
       var $126=(($125)|0)!=0;
@@ -28290,18 +28157,18 @@ function _op_rol16($ctx, $src, $val) {
       var $129=(($128+4)|0);
       var $130=(($129+96)|0);
       var $131=$130;
-      var $132=HEAP32[(($131)>>2)];
+      var $132=HEAP[$131];
       var $133=$132 | 4;
-      HEAP32[(($131)>>2)]=$133;
+      HEAP[$131]=$133;
       __label__ = 21; break;
     case 20: 
       var $135=$2;
       var $136=(($135+4)|0);
       var $137=(($136+96)|0);
       var $138=$137;
-      var $139=HEAP32[(($138)>>2)];
+      var $139=HEAP[$138];
       var $140=$139 & -5;
-      HEAP32[(($138)>>2)]=$140;
+      HEAP[$138]=$140;
       __label__ = 21; break;
     case 21: 
       var $142=$ret;
@@ -28348,7 +28215,7 @@ function _op_rol_cl_16($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAPU8[($10)];
+  var $11=HEAP[$10];
   var $12=(($11)&255);
   var $13=_op_rol16($3, $4, $12);
   ;
@@ -28403,18 +28270,18 @@ function _op_rol32($ctx, $src, $val) {
       var $26=(($25+4)|0);
       var $27=(($26+96)|0);
       var $28=$27;
-      var $29=HEAP32[(($28)>>2)];
+      var $29=HEAP[$28];
       var $30=$29 | 1;
-      HEAP32[(($28)>>2)]=$30;
+      HEAP[$28]=$30;
       __label__ = 6; break;
     case 5: 
       var $32=$2;
       var $33=(($32+4)|0);
       var $34=(($33+96)|0);
       var $35=$34;
-      var $36=HEAP32[(($35)>>2)];
+      var $36=HEAP[$35];
       var $37=$36 & -2;
-      HEAP32[(($35)>>2)]=$37;
+      HEAP[$35]=$37;
       __label__ = 6; break;
     case 6: 
       var $39=$oshic;
@@ -28427,7 +28294,7 @@ function _op_rol32($ctx, $src, $val) {
       var $45=(($44+4)|0);
       var $46=(($45+96)|0);
       var $47=$46;
-      var $48=HEAPU32[(($47)>>2)];
+      var $48=HEAP[$47];
       var $49=$48 >>> 0;
       var $50=$49 & 1;
       var $51=$43 ^ $50;
@@ -28438,18 +28305,18 @@ function _op_rol32($ctx, $src, $val) {
       var $55=(($54+4)|0);
       var $56=(($55+96)|0);
       var $57=$56;
-      var $58=HEAP32[(($57)>>2)];
+      var $58=HEAP[$57];
       var $59=$58 | 2048;
-      HEAP32[(($57)>>2)]=$59;
+      HEAP[$57]=$59;
       __label__ = 10; break;
     case 9: 
       var $61=$2;
       var $62=(($61+4)|0);
       var $63=(($62+96)|0);
       var $64=$63;
-      var $65=HEAP32[(($64)>>2)];
+      var $65=HEAP[$64];
       var $66=$65 & -2049;
-      HEAP32[(($64)>>2)]=$66;
+      HEAP[$64]=$66;
       __label__ = 10; break;
     case 10: 
       __label__ = 12; break;
@@ -28458,9 +28325,9 @@ function _op_rol32($ctx, $src, $val) {
       var $70=(($69+4)|0);
       var $71=(($70+96)|0);
       var $72=$71;
-      var $73=HEAP32[(($72)>>2)];
+      var $73=HEAP[$72];
       var $74=$73 & -2049;
-      HEAP32[(($72)>>2)]=$74;
+      HEAP[$72]=$74;
       __label__ = 12; break;
     case 12: 
       var $76=$ret;
@@ -28472,18 +28339,18 @@ function _op_rol32($ctx, $src, $val) {
       var $81=(($80+4)|0);
       var $82=(($81+96)|0);
       var $83=$82;
-      var $84=HEAP32[(($83)>>2)];
+      var $84=HEAP[$83];
       var $85=$84 | 128;
-      HEAP32[(($83)>>2)]=$85;
+      HEAP[$83]=$85;
       __label__ = 15; break;
     case 14: 
       var $87=$2;
       var $88=(($87+4)|0);
       var $89=(($88+96)|0);
       var $90=$89;
-      var $91=HEAP32[(($90)>>2)];
+      var $91=HEAP[$90];
       var $92=$91 & -129;
-      HEAP32[(($90)>>2)]=$92;
+      HEAP[$90]=$92;
       __label__ = 15; break;
     case 15: 
       var $94=$ret;
@@ -28494,27 +28361,27 @@ function _op_rol32($ctx, $src, $val) {
       var $98=(($97+4)|0);
       var $99=(($98+96)|0);
       var $100=$99;
-      var $101=HEAP32[(($100)>>2)];
+      var $101=HEAP[$100];
       var $102=$101 | 64;
-      HEAP32[(($100)>>2)]=$102;
+      HEAP[$100]=$102;
       __label__ = 18; break;
     case 17: 
       var $104=$2;
       var $105=(($104+4)|0);
       var $106=(($105+96)|0);
       var $107=$106;
-      var $108=HEAP32[(($107)>>2)];
+      var $108=HEAP[$107];
       var $109=$108 & -65;
-      HEAP32[(($107)>>2)]=$109;
+      HEAP[$107]=$109;
       __label__ = 18; break;
     case 18: 
       var $111=$2;
       var $112=(($111+4)|0);
       var $113=(($112+96)|0);
       var $114=$113;
-      var $115=HEAP32[(($114)>>2)];
+      var $115=HEAP[$114];
       var $116=$115 & -17;
-      HEAP32[(($114)>>2)]=$116;
+      HEAP[$114]=$116;
       var $117=$ret;
       var $118=(($117) & 65535);
       var $119=_softx86_parity16($118);
@@ -28525,18 +28392,18 @@ function _op_rol32($ctx, $src, $val) {
       var $123=(($122+4)|0);
       var $124=(($123+96)|0);
       var $125=$124;
-      var $126=HEAP32[(($125)>>2)];
+      var $126=HEAP[$125];
       var $127=$126 | 4;
-      HEAP32[(($125)>>2)]=$127;
+      HEAP[$125]=$127;
       __label__ = 21; break;
     case 20: 
       var $129=$2;
       var $130=(($129+4)|0);
       var $131=(($130+96)|0);
       var $132=$131;
-      var $133=HEAP32[(($132)>>2)];
+      var $133=HEAP[$132];
       var $134=$133 & -5;
-      HEAP32[(($132)>>2)]=$134;
+      HEAP[$132]=$134;
       __label__ = 21; break;
     case 21: 
       var $136=$ret;
@@ -28583,7 +28450,7 @@ function _op_rol_cl_32($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAPU8[($10)];
+  var $11=HEAP[$10];
   var $12=(($11)&255);
   var $13=_op_rol32($3, $4, $12);
   ;
@@ -28644,7 +28511,7 @@ function _op_rcl8($ctx, $src, $val) {
       var $28=(($27+4)|0);
       var $29=(($28+96)|0);
       var $30=$29;
-      var $31=HEAPU32[(($30)>>2)];
+      var $31=HEAP[$30];
       var $32=$31 >>> 0;
       var $33=$32 & 1;
       var $34=$26 | $33;
@@ -28658,18 +28525,18 @@ function _op_rcl8($ctx, $src, $val) {
       var $40=(($39+4)|0);
       var $41=(($40+96)|0);
       var $42=$41;
-      var $43=HEAP32[(($42)>>2)];
+      var $43=HEAP[$42];
       var $44=$43 | 1;
-      HEAP32[(($42)>>2)]=$44;
+      HEAP[$42]=$44;
       __label__ = 8; break;
     case 7: 
       var $46=$2;
       var $47=(($46+4)|0);
       var $48=(($47+96)|0);
       var $49=$48;
-      var $50=HEAP32[(($49)>>2)];
+      var $50=HEAP[$49];
       var $51=$50 & -2;
-      HEAP32[(($49)>>2)]=$51;
+      HEAP[$49]=$51;
       __label__ = 8; break;
     case 8: 
       __label__ = 4; break;
@@ -28685,7 +28552,7 @@ function _op_rcl8($ctx, $src, $val) {
       var $61=(($60+4)|0);
       var $62=(($61+96)|0);
       var $63=$62;
-      var $64=HEAPU32[(($63)>>2)];
+      var $64=HEAP[$63];
       var $65=$64 >>> 0;
       var $66=$65 & 1;
       var $67=$59 ^ $66;
@@ -28696,18 +28563,18 @@ function _op_rcl8($ctx, $src, $val) {
       var $71=(($70+4)|0);
       var $72=(($71+96)|0);
       var $73=$72;
-      var $74=HEAP32[(($73)>>2)];
+      var $74=HEAP[$73];
       var $75=$74 | 2048;
-      HEAP32[(($73)>>2)]=$75;
+      HEAP[$73]=$75;
       __label__ = 13; break;
     case 12: 
       var $77=$2;
       var $78=(($77+4)|0);
       var $79=(($78+96)|0);
       var $80=$79;
-      var $81=HEAP32[(($80)>>2)];
+      var $81=HEAP[$80];
       var $82=$81 & -2049;
-      HEAP32[(($80)>>2)]=$82;
+      HEAP[$80]=$82;
       __label__ = 13; break;
     case 13: 
       __label__ = 15; break;
@@ -28716,9 +28583,9 @@ function _op_rcl8($ctx, $src, $val) {
       var $86=(($85+4)|0);
       var $87=(($86+96)|0);
       var $88=$87;
-      var $89=HEAP32[(($88)>>2)];
+      var $89=HEAP[$88];
       var $90=$89 & -2049;
-      HEAP32[(($88)>>2)]=$90;
+      HEAP[$88]=$90;
       __label__ = 15; break;
     case 15: 
       var $92=$ret;
@@ -28731,18 +28598,18 @@ function _op_rcl8($ctx, $src, $val) {
       var $98=(($97+4)|0);
       var $99=(($98+96)|0);
       var $100=$99;
-      var $101=HEAP32[(($100)>>2)];
+      var $101=HEAP[$100];
       var $102=$101 | 128;
-      HEAP32[(($100)>>2)]=$102;
+      HEAP[$100]=$102;
       __label__ = 18; break;
     case 17: 
       var $104=$2;
       var $105=(($104+4)|0);
       var $106=(($105+96)|0);
       var $107=$106;
-      var $108=HEAP32[(($107)>>2)];
+      var $108=HEAP[$107];
       var $109=$108 & -129;
-      HEAP32[(($107)>>2)]=$109;
+      HEAP[$107]=$109;
       __label__ = 18; break;
     case 18: 
       var $111=$ret;
@@ -28753,27 +28620,27 @@ function _op_rcl8($ctx, $src, $val) {
       var $115=(($114+4)|0);
       var $116=(($115+96)|0);
       var $117=$116;
-      var $118=HEAP32[(($117)>>2)];
+      var $118=HEAP[$117];
       var $119=$118 | 64;
-      HEAP32[(($117)>>2)]=$119;
+      HEAP[$117]=$119;
       __label__ = 21; break;
     case 20: 
       var $121=$2;
       var $122=(($121+4)|0);
       var $123=(($122+96)|0);
       var $124=$123;
-      var $125=HEAP32[(($124)>>2)];
+      var $125=HEAP[$124];
       var $126=$125 & -65;
-      HEAP32[(($124)>>2)]=$126;
+      HEAP[$124]=$126;
       __label__ = 21; break;
     case 21: 
       var $128=$2;
       var $129=(($128+4)|0);
       var $130=(($129+96)|0);
       var $131=$130;
-      var $132=HEAP32[(($131)>>2)];
+      var $132=HEAP[$131];
       var $133=$132 & -17;
-      HEAP32[(($131)>>2)]=$133;
+      HEAP[$131]=$133;
       var $134=$ret;
       var $135=_softx86_parity8($134);
       var $136=(($135)|0)!=0;
@@ -28783,18 +28650,18 @@ function _op_rcl8($ctx, $src, $val) {
       var $139=(($138+4)|0);
       var $140=(($139+96)|0);
       var $141=$140;
-      var $142=HEAP32[(($141)>>2)];
+      var $142=HEAP[$141];
       var $143=$142 | 4;
-      HEAP32[(($141)>>2)]=$143;
+      HEAP[$141]=$143;
       __label__ = 24; break;
     case 23: 
       var $145=$2;
       var $146=(($145+4)|0);
       var $147=(($146+96)|0);
       var $148=$147;
-      var $149=HEAP32[(($148)>>2)];
+      var $149=HEAP[$148];
       var $150=$149 & -5;
-      HEAP32[(($148)>>2)]=$150;
+      HEAP[$148]=$150;
       __label__ = 24; break;
     case 24: 
       var $152=$ret;
@@ -28841,7 +28708,7 @@ function _op_rcl_cl_8($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAP8[($10)];
+  var $11=HEAP[$10];
   var $12=_op_rcl8($3, $4, $11);
   ;
   return $12;
@@ -28901,7 +28768,7 @@ function _op_rcl16($ctx, $src, $val) {
       var $28=(($27+4)|0);
       var $29=(($28+96)|0);
       var $30=$29;
-      var $31=HEAPU32[(($30)>>2)];
+      var $31=HEAP[$30];
       var $32=$31 >>> 0;
       var $33=$32 & 1;
       var $34=$26 | $33;
@@ -28915,18 +28782,18 @@ function _op_rcl16($ctx, $src, $val) {
       var $40=(($39+4)|0);
       var $41=(($40+96)|0);
       var $42=$41;
-      var $43=HEAP32[(($42)>>2)];
+      var $43=HEAP[$42];
       var $44=$43 | 1;
-      HEAP32[(($42)>>2)]=$44;
+      HEAP[$42]=$44;
       __label__ = 8; break;
     case 7: 
       var $46=$2;
       var $47=(($46+4)|0);
       var $48=(($47+96)|0);
       var $49=$48;
-      var $50=HEAP32[(($49)>>2)];
+      var $50=HEAP[$49];
       var $51=$50 & -2;
-      HEAP32[(($49)>>2)]=$51;
+      HEAP[$49]=$51;
       __label__ = 8; break;
     case 8: 
       __label__ = 4; break;
@@ -28942,7 +28809,7 @@ function _op_rcl16($ctx, $src, $val) {
       var $61=(($60+4)|0);
       var $62=(($61+96)|0);
       var $63=$62;
-      var $64=HEAPU32[(($63)>>2)];
+      var $64=HEAP[$63];
       var $65=$64 >>> 0;
       var $66=$65 & 1;
       var $67=$59 ^ $66;
@@ -28953,18 +28820,18 @@ function _op_rcl16($ctx, $src, $val) {
       var $71=(($70+4)|0);
       var $72=(($71+96)|0);
       var $73=$72;
-      var $74=HEAP32[(($73)>>2)];
+      var $74=HEAP[$73];
       var $75=$74 | 2048;
-      HEAP32[(($73)>>2)]=$75;
+      HEAP[$73]=$75;
       __label__ = 13; break;
     case 12: 
       var $77=$2;
       var $78=(($77+4)|0);
       var $79=(($78+96)|0);
       var $80=$79;
-      var $81=HEAP32[(($80)>>2)];
+      var $81=HEAP[$80];
       var $82=$81 & -2049;
-      HEAP32[(($80)>>2)]=$82;
+      HEAP[$80]=$82;
       __label__ = 13; break;
     case 13: 
       __label__ = 15; break;
@@ -28973,9 +28840,9 @@ function _op_rcl16($ctx, $src, $val) {
       var $86=(($85+4)|0);
       var $87=(($86+96)|0);
       var $88=$87;
-      var $89=HEAP32[(($88)>>2)];
+      var $89=HEAP[$88];
       var $90=$89 & -2049;
-      HEAP32[(($88)>>2)]=$90;
+      HEAP[$88]=$90;
       __label__ = 15; break;
     case 15: 
       var $92=$ret;
@@ -28988,18 +28855,18 @@ function _op_rcl16($ctx, $src, $val) {
       var $98=(($97+4)|0);
       var $99=(($98+96)|0);
       var $100=$99;
-      var $101=HEAP32[(($100)>>2)];
+      var $101=HEAP[$100];
       var $102=$101 | 128;
-      HEAP32[(($100)>>2)]=$102;
+      HEAP[$100]=$102;
       __label__ = 18; break;
     case 17: 
       var $104=$2;
       var $105=(($104+4)|0);
       var $106=(($105+96)|0);
       var $107=$106;
-      var $108=HEAP32[(($107)>>2)];
+      var $108=HEAP[$107];
       var $109=$108 & -129;
-      HEAP32[(($107)>>2)]=$109;
+      HEAP[$107]=$109;
       __label__ = 18; break;
     case 18: 
       var $111=$ret;
@@ -29010,27 +28877,27 @@ function _op_rcl16($ctx, $src, $val) {
       var $115=(($114+4)|0);
       var $116=(($115+96)|0);
       var $117=$116;
-      var $118=HEAP32[(($117)>>2)];
+      var $118=HEAP[$117];
       var $119=$118 | 64;
-      HEAP32[(($117)>>2)]=$119;
+      HEAP[$117]=$119;
       __label__ = 21; break;
     case 20: 
       var $121=$2;
       var $122=(($121+4)|0);
       var $123=(($122+96)|0);
       var $124=$123;
-      var $125=HEAP32[(($124)>>2)];
+      var $125=HEAP[$124];
       var $126=$125 & -65;
-      HEAP32[(($124)>>2)]=$126;
+      HEAP[$124]=$126;
       __label__ = 21; break;
     case 21: 
       var $128=$2;
       var $129=(($128+4)|0);
       var $130=(($129+96)|0);
       var $131=$130;
-      var $132=HEAP32[(($131)>>2)];
+      var $132=HEAP[$131];
       var $133=$132 & -17;
-      HEAP32[(($131)>>2)]=$133;
+      HEAP[$131]=$133;
       var $134=$ret;
       var $135=_softx86_parity16($134);
       var $136=(($135)|0)!=0;
@@ -29040,18 +28907,18 @@ function _op_rcl16($ctx, $src, $val) {
       var $139=(($138+4)|0);
       var $140=(($139+96)|0);
       var $141=$140;
-      var $142=HEAP32[(($141)>>2)];
+      var $142=HEAP[$141];
       var $143=$142 | 4;
-      HEAP32[(($141)>>2)]=$143;
+      HEAP[$141]=$143;
       __label__ = 24; break;
     case 23: 
       var $145=$2;
       var $146=(($145+4)|0);
       var $147=(($146+96)|0);
       var $148=$147;
-      var $149=HEAP32[(($148)>>2)];
+      var $149=HEAP[$148];
       var $150=$149 & -5;
-      HEAP32[(($148)>>2)]=$150;
+      HEAP[$148]=$150;
       __label__ = 24; break;
     case 24: 
       var $152=$ret;
@@ -29098,7 +28965,7 @@ function _op_rcl_cl_16($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAPU8[($10)];
+  var $11=HEAP[$10];
   var $12=(($11)&255);
   var $13=_op_rcl16($3, $4, $12);
   ;
@@ -29155,7 +29022,7 @@ function _op_rcl32($ctx, $src, $val) {
       var $24=(($23+4)|0);
       var $25=(($24+96)|0);
       var $26=$25;
-      var $27=HEAPU32[(($26)>>2)];
+      var $27=HEAP[$26];
       var $28=$27 >>> 0;
       var $29=$28 & 1;
       var $30=$22 | $29;
@@ -29168,18 +29035,18 @@ function _op_rcl32($ctx, $src, $val) {
       var $35=(($34+4)|0);
       var $36=(($35+96)|0);
       var $37=$36;
-      var $38=HEAP32[(($37)>>2)];
+      var $38=HEAP[$37];
       var $39=$38 | 1;
-      HEAP32[(($37)>>2)]=$39;
+      HEAP[$37]=$39;
       __label__ = 8; break;
     case 7: 
       var $41=$2;
       var $42=(($41+4)|0);
       var $43=(($42+96)|0);
       var $44=$43;
-      var $45=HEAP32[(($44)>>2)];
+      var $45=HEAP[$44];
       var $46=$45 & -2;
-      HEAP32[(($44)>>2)]=$46;
+      HEAP[$44]=$46;
       __label__ = 8; break;
     case 8: 
       __label__ = 4; break;
@@ -29194,7 +29061,7 @@ function _op_rcl32($ctx, $src, $val) {
       var $55=(($54+4)|0);
       var $56=(($55+96)|0);
       var $57=$56;
-      var $58=HEAPU32[(($57)>>2)];
+      var $58=HEAP[$57];
       var $59=$58 >>> 0;
       var $60=$59 & 1;
       var $61=$53 ^ $60;
@@ -29205,18 +29072,18 @@ function _op_rcl32($ctx, $src, $val) {
       var $65=(($64+4)|0);
       var $66=(($65+96)|0);
       var $67=$66;
-      var $68=HEAP32[(($67)>>2)];
+      var $68=HEAP[$67];
       var $69=$68 | 2048;
-      HEAP32[(($67)>>2)]=$69;
+      HEAP[$67]=$69;
       __label__ = 13; break;
     case 12: 
       var $71=$2;
       var $72=(($71+4)|0);
       var $73=(($72+96)|0);
       var $74=$73;
-      var $75=HEAP32[(($74)>>2)];
+      var $75=HEAP[$74];
       var $76=$75 & -2049;
-      HEAP32[(($74)>>2)]=$76;
+      HEAP[$74]=$76;
       __label__ = 13; break;
     case 13: 
       __label__ = 15; break;
@@ -29225,9 +29092,9 @@ function _op_rcl32($ctx, $src, $val) {
       var $80=(($79+4)|0);
       var $81=(($80+96)|0);
       var $82=$81;
-      var $83=HEAP32[(($82)>>2)];
+      var $83=HEAP[$82];
       var $84=$83 & -2049;
-      HEAP32[(($82)>>2)]=$84;
+      HEAP[$82]=$84;
       __label__ = 15; break;
     case 15: 
       var $86=$ret;
@@ -29239,18 +29106,18 @@ function _op_rcl32($ctx, $src, $val) {
       var $91=(($90+4)|0);
       var $92=(($91+96)|0);
       var $93=$92;
-      var $94=HEAP32[(($93)>>2)];
+      var $94=HEAP[$93];
       var $95=$94 | 128;
-      HEAP32[(($93)>>2)]=$95;
+      HEAP[$93]=$95;
       __label__ = 18; break;
     case 17: 
       var $97=$2;
       var $98=(($97+4)|0);
       var $99=(($98+96)|0);
       var $100=$99;
-      var $101=HEAP32[(($100)>>2)];
+      var $101=HEAP[$100];
       var $102=$101 & -129;
-      HEAP32[(($100)>>2)]=$102;
+      HEAP[$100]=$102;
       __label__ = 18; break;
     case 18: 
       var $104=$ret;
@@ -29261,27 +29128,27 @@ function _op_rcl32($ctx, $src, $val) {
       var $108=(($107+4)|0);
       var $109=(($108+96)|0);
       var $110=$109;
-      var $111=HEAP32[(($110)>>2)];
+      var $111=HEAP[$110];
       var $112=$111 | 64;
-      HEAP32[(($110)>>2)]=$112;
+      HEAP[$110]=$112;
       __label__ = 21; break;
     case 20: 
       var $114=$2;
       var $115=(($114+4)|0);
       var $116=(($115+96)|0);
       var $117=$116;
-      var $118=HEAP32[(($117)>>2)];
+      var $118=HEAP[$117];
       var $119=$118 & -65;
-      HEAP32[(($117)>>2)]=$119;
+      HEAP[$117]=$119;
       __label__ = 21; break;
     case 21: 
       var $121=$2;
       var $122=(($121+4)|0);
       var $123=(($122+96)|0);
       var $124=$123;
-      var $125=HEAP32[(($124)>>2)];
+      var $125=HEAP[$124];
       var $126=$125 & -17;
-      HEAP32[(($124)>>2)]=$126;
+      HEAP[$124]=$126;
       var $127=$ret;
       var $128=_softx86_parity32($127);
       var $129=(($128)|0)!=0;
@@ -29291,18 +29158,18 @@ function _op_rcl32($ctx, $src, $val) {
       var $132=(($131+4)|0);
       var $133=(($132+96)|0);
       var $134=$133;
-      var $135=HEAP32[(($134)>>2)];
+      var $135=HEAP[$134];
       var $136=$135 | 4;
-      HEAP32[(($134)>>2)]=$136;
+      HEAP[$134]=$136;
       __label__ = 24; break;
     case 23: 
       var $138=$2;
       var $139=(($138+4)|0);
       var $140=(($139+96)|0);
       var $141=$140;
-      var $142=HEAP32[(($141)>>2)];
+      var $142=HEAP[$141];
       var $143=$142 & -5;
-      HEAP32[(($141)>>2)]=$143;
+      HEAP[$141]=$143;
       __label__ = 24; break;
     case 24: 
       var $145=$ret;
@@ -29349,7 +29216,7 @@ function _op_rcl_cl_32($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAPU8[($10)];
+  var $11=HEAP[$10];
   var $12=(($11)&255);
   var $13=_op_rcl32($3, $4, $12);
   ;
@@ -29399,7 +29266,7 @@ function _op_rcr8($ctx, $src, $val) {
       var $21=(($20+4)|0);
       var $22=(($21+96)|0);
       var $23=$22;
-      var $24=HEAPU32[(($23)>>2)];
+      var $24=HEAP[$23];
       var $25=$24 >>> 0;
       var $26=$25 & 1;
       var $27=$19 ^ $26;
@@ -29410,18 +29277,18 @@ function _op_rcr8($ctx, $src, $val) {
       var $31=(($30+4)|0);
       var $32=(($31+96)|0);
       var $33=$32;
-      var $34=HEAP32[(($33)>>2)];
+      var $34=HEAP[$33];
       var $35=$34 | 2048;
-      HEAP32[(($33)>>2)]=$35;
+      HEAP[$33]=$35;
       __label__ = 7; break;
     case 6: 
       var $37=$2;
       var $38=(($37+4)|0);
       var $39=(($38+96)|0);
       var $40=$39;
-      var $41=HEAP32[(($40)>>2)];
+      var $41=HEAP[$40];
       var $42=$41 & -2049;
-      HEAP32[(($40)>>2)]=$42;
+      HEAP[$40]=$42;
       __label__ = 7; break;
     case 7: 
       __label__ = 9; break;
@@ -29430,9 +29297,9 @@ function _op_rcr8($ctx, $src, $val) {
       var $46=(($45+4)|0);
       var $47=(($46+96)|0);
       var $48=$47;
-      var $49=HEAP32[(($48)>>2)];
+      var $49=HEAP[$48];
       var $50=$49 & -2049;
-      HEAP32[(($48)>>2)]=$50;
+      HEAP[$48]=$50;
       __label__ = 9; break;
     case 9: 
       var $52=$oshic;
@@ -29457,7 +29324,7 @@ function _op_rcr8($ctx, $src, $val) {
       var $66=(($65+4)|0);
       var $67=(($66+96)|0);
       var $68=$67;
-      var $69=HEAPU32[(($68)>>2)];
+      var $69=HEAP[$68];
       var $70=$69 >>> 0;
       var $71=$70 & 1;
       var $72=$71 << 7;
@@ -29472,18 +29339,18 @@ function _op_rcr8($ctx, $src, $val) {
       var $79=(($78+4)|0);
       var $80=(($79+96)|0);
       var $81=$80;
-      var $82=HEAP32[(($81)>>2)];
+      var $82=HEAP[$81];
       var $83=$82 | 1;
-      HEAP32[(($81)>>2)]=$83;
+      HEAP[$81]=$83;
       __label__ = 14; break;
     case 13: 
       var $85=$2;
       var $86=(($85+4)|0);
       var $87=(($86+96)|0);
       var $88=$87;
-      var $89=HEAP32[(($88)>>2)];
+      var $89=HEAP[$88];
       var $90=$89 & -2;
-      HEAP32[(($88)>>2)]=$90;
+      HEAP[$88]=$90;
       __label__ = 14; break;
     case 14: 
       __label__ = 10; break;
@@ -29498,18 +29365,18 @@ function _op_rcr8($ctx, $src, $val) {
       var $99=(($98+4)|0);
       var $100=(($99+96)|0);
       var $101=$100;
-      var $102=HEAP32[(($101)>>2)];
+      var $102=HEAP[$101];
       var $103=$102 | 128;
-      HEAP32[(($101)>>2)]=$103;
+      HEAP[$101]=$103;
       __label__ = 18; break;
     case 17: 
       var $105=$2;
       var $106=(($105+4)|0);
       var $107=(($106+96)|0);
       var $108=$107;
-      var $109=HEAP32[(($108)>>2)];
+      var $109=HEAP[$108];
       var $110=$109 & -129;
-      HEAP32[(($108)>>2)]=$110;
+      HEAP[$108]=$110;
       __label__ = 18; break;
     case 18: 
       var $112=$ret;
@@ -29520,27 +29387,27 @@ function _op_rcr8($ctx, $src, $val) {
       var $116=(($115+4)|0);
       var $117=(($116+96)|0);
       var $118=$117;
-      var $119=HEAP32[(($118)>>2)];
+      var $119=HEAP[$118];
       var $120=$119 | 64;
-      HEAP32[(($118)>>2)]=$120;
+      HEAP[$118]=$120;
       __label__ = 21; break;
     case 20: 
       var $122=$2;
       var $123=(($122+4)|0);
       var $124=(($123+96)|0);
       var $125=$124;
-      var $126=HEAP32[(($125)>>2)];
+      var $126=HEAP[$125];
       var $127=$126 & -65;
-      HEAP32[(($125)>>2)]=$127;
+      HEAP[$125]=$127;
       __label__ = 21; break;
     case 21: 
       var $129=$2;
       var $130=(($129+4)|0);
       var $131=(($130+96)|0);
       var $132=$131;
-      var $133=HEAP32[(($132)>>2)];
+      var $133=HEAP[$132];
       var $134=$133 & -17;
-      HEAP32[(($132)>>2)]=$134;
+      HEAP[$132]=$134;
       var $135=$ret;
       var $136=_softx86_parity8($135);
       var $137=(($136)|0)!=0;
@@ -29550,18 +29417,18 @@ function _op_rcr8($ctx, $src, $val) {
       var $140=(($139+4)|0);
       var $141=(($140+96)|0);
       var $142=$141;
-      var $143=HEAP32[(($142)>>2)];
+      var $143=HEAP[$142];
       var $144=$143 | 4;
-      HEAP32[(($142)>>2)]=$144;
+      HEAP[$142]=$144;
       __label__ = 24; break;
     case 23: 
       var $146=$2;
       var $147=(($146+4)|0);
       var $148=(($147+96)|0);
       var $149=$148;
-      var $150=HEAP32[(($149)>>2)];
+      var $150=HEAP[$149];
       var $151=$150 & -5;
-      HEAP32[(($149)>>2)]=$151;
+      HEAP[$149]=$151;
       __label__ = 24; break;
     case 24: 
       var $153=$ret;
@@ -29608,7 +29475,7 @@ function _op_rcr_cl_8($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAP8[($10)];
+  var $11=HEAP[$10];
   var $12=_op_rcr8($3, $4, $11);
   ;
   return $12;
@@ -29657,7 +29524,7 @@ function _op_rcr16($ctx, $src, $val) {
       var $21=(($20+4)|0);
       var $22=(($21+96)|0);
       var $23=$22;
-      var $24=HEAPU32[(($23)>>2)];
+      var $24=HEAP[$23];
       var $25=$24 >>> 0;
       var $26=$25 & 1;
       var $27=$19 ^ $26;
@@ -29668,18 +29535,18 @@ function _op_rcr16($ctx, $src, $val) {
       var $31=(($30+4)|0);
       var $32=(($31+96)|0);
       var $33=$32;
-      var $34=HEAP32[(($33)>>2)];
+      var $34=HEAP[$33];
       var $35=$34 | 2048;
-      HEAP32[(($33)>>2)]=$35;
+      HEAP[$33]=$35;
       __label__ = 7; break;
     case 6: 
       var $37=$2;
       var $38=(($37+4)|0);
       var $39=(($38+96)|0);
       var $40=$39;
-      var $41=HEAP32[(($40)>>2)];
+      var $41=HEAP[$40];
       var $42=$41 & -2049;
-      HEAP32[(($40)>>2)]=$42;
+      HEAP[$40]=$42;
       __label__ = 7; break;
     case 7: 
       __label__ = 9; break;
@@ -29688,9 +29555,9 @@ function _op_rcr16($ctx, $src, $val) {
       var $46=(($45+4)|0);
       var $47=(($46+96)|0);
       var $48=$47;
-      var $49=HEAP32[(($48)>>2)];
+      var $49=HEAP[$48];
       var $50=$49 & -2049;
-      HEAP32[(($48)>>2)]=$50;
+      HEAP[$48]=$50;
       __label__ = 9; break;
     case 9: 
       var $52=$oshic;
@@ -29715,7 +29582,7 @@ function _op_rcr16($ctx, $src, $val) {
       var $66=(($65+4)|0);
       var $67=(($66+96)|0);
       var $68=$67;
-      var $69=HEAPU32[(($68)>>2)];
+      var $69=HEAP[$68];
       var $70=$69 >>> 0;
       var $71=$70 & 1;
       var $72=$71 << 15;
@@ -29730,18 +29597,18 @@ function _op_rcr16($ctx, $src, $val) {
       var $79=(($78+4)|0);
       var $80=(($79+96)|0);
       var $81=$80;
-      var $82=HEAP32[(($81)>>2)];
+      var $82=HEAP[$81];
       var $83=$82 | 1;
-      HEAP32[(($81)>>2)]=$83;
+      HEAP[$81]=$83;
       __label__ = 14; break;
     case 13: 
       var $85=$2;
       var $86=(($85+4)|0);
       var $87=(($86+96)|0);
       var $88=$87;
-      var $89=HEAP32[(($88)>>2)];
+      var $89=HEAP[$88];
       var $90=$89 & -2;
-      HEAP32[(($88)>>2)]=$90;
+      HEAP[$88]=$90;
       __label__ = 14; break;
     case 14: 
       __label__ = 10; break;
@@ -29756,18 +29623,18 @@ function _op_rcr16($ctx, $src, $val) {
       var $99=(($98+4)|0);
       var $100=(($99+96)|0);
       var $101=$100;
-      var $102=HEAP32[(($101)>>2)];
+      var $102=HEAP[$101];
       var $103=$102 | 128;
-      HEAP32[(($101)>>2)]=$103;
+      HEAP[$101]=$103;
       __label__ = 18; break;
     case 17: 
       var $105=$2;
       var $106=(($105+4)|0);
       var $107=(($106+96)|0);
       var $108=$107;
-      var $109=HEAP32[(($108)>>2)];
+      var $109=HEAP[$108];
       var $110=$109 & -129;
-      HEAP32[(($108)>>2)]=$110;
+      HEAP[$108]=$110;
       __label__ = 18; break;
     case 18: 
       var $112=$ret;
@@ -29778,27 +29645,27 @@ function _op_rcr16($ctx, $src, $val) {
       var $116=(($115+4)|0);
       var $117=(($116+96)|0);
       var $118=$117;
-      var $119=HEAP32[(($118)>>2)];
+      var $119=HEAP[$118];
       var $120=$119 | 64;
-      HEAP32[(($118)>>2)]=$120;
+      HEAP[$118]=$120;
       __label__ = 21; break;
     case 20: 
       var $122=$2;
       var $123=(($122+4)|0);
       var $124=(($123+96)|0);
       var $125=$124;
-      var $126=HEAP32[(($125)>>2)];
+      var $126=HEAP[$125];
       var $127=$126 & -65;
-      HEAP32[(($125)>>2)]=$127;
+      HEAP[$125]=$127;
       __label__ = 21; break;
     case 21: 
       var $129=$2;
       var $130=(($129+4)|0);
       var $131=(($130+96)|0);
       var $132=$131;
-      var $133=HEAP32[(($132)>>2)];
+      var $133=HEAP[$132];
       var $134=$133 & -17;
-      HEAP32[(($132)>>2)]=$134;
+      HEAP[$132]=$134;
       var $135=$ret;
       var $136=_softx86_parity16($135);
       var $137=(($136)|0)!=0;
@@ -29808,18 +29675,18 @@ function _op_rcr16($ctx, $src, $val) {
       var $140=(($139+4)|0);
       var $141=(($140+96)|0);
       var $142=$141;
-      var $143=HEAP32[(($142)>>2)];
+      var $143=HEAP[$142];
       var $144=$143 | 4;
-      HEAP32[(($142)>>2)]=$144;
+      HEAP[$142]=$144;
       __label__ = 24; break;
     case 23: 
       var $146=$2;
       var $147=(($146+4)|0);
       var $148=(($147+96)|0);
       var $149=$148;
-      var $150=HEAP32[(($149)>>2)];
+      var $150=HEAP[$149];
       var $151=$150 & -5;
-      HEAP32[(($149)>>2)]=$151;
+      HEAP[$149]=$151;
       __label__ = 24; break;
     case 24: 
       var $153=$ret;
@@ -29866,7 +29733,7 @@ function _op_rcr_cl_16($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAPU8[($10)];
+  var $11=HEAP[$10];
   var $12=(($11)&255);
   var $13=_op_rcr16($3, $4, $12);
   ;
@@ -29914,7 +29781,7 @@ function _op_rcr32($ctx, $src, $val) {
       var $19=(($18+4)|0);
       var $20=(($19+96)|0);
       var $21=$20;
-      var $22=HEAPU32[(($21)>>2)];
+      var $22=HEAP[$21];
       var $23=$22 >>> 0;
       var $24=$23 & 1;
       var $25=$17 ^ $24;
@@ -29925,18 +29792,18 @@ function _op_rcr32($ctx, $src, $val) {
       var $29=(($28+4)|0);
       var $30=(($29+96)|0);
       var $31=$30;
-      var $32=HEAP32[(($31)>>2)];
+      var $32=HEAP[$31];
       var $33=$32 | 2048;
-      HEAP32[(($31)>>2)]=$33;
+      HEAP[$31]=$33;
       __label__ = 7; break;
     case 6: 
       var $35=$2;
       var $36=(($35+4)|0);
       var $37=(($36+96)|0);
       var $38=$37;
-      var $39=HEAP32[(($38)>>2)];
+      var $39=HEAP[$38];
       var $40=$39 & -2049;
-      HEAP32[(($38)>>2)]=$40;
+      HEAP[$38]=$40;
       __label__ = 7; break;
     case 7: 
       __label__ = 9; break;
@@ -29945,9 +29812,9 @@ function _op_rcr32($ctx, $src, $val) {
       var $44=(($43+4)|0);
       var $45=(($44+96)|0);
       var $46=$45;
-      var $47=HEAP32[(($46)>>2)];
+      var $47=HEAP[$46];
       var $48=$47 & -2049;
-      HEAP32[(($46)>>2)]=$48;
+      HEAP[$46]=$48;
       __label__ = 9; break;
     case 9: 
       var $50=$oshic;
@@ -29969,7 +29836,7 @@ function _op_rcr32($ctx, $src, $val) {
       var $61=(($60+4)|0);
       var $62=(($61+96)|0);
       var $63=$62;
-      var $64=HEAPU32[(($63)>>2)];
+      var $64=HEAP[$63];
       var $65=$64 >>> 0;
       var $66=$65 & 1;
       var $67=$66 << 31;
@@ -29983,18 +29850,18 @@ function _op_rcr32($ctx, $src, $val) {
       var $73=(($72+4)|0);
       var $74=(($73+96)|0);
       var $75=$74;
-      var $76=HEAP32[(($75)>>2)];
+      var $76=HEAP[$75];
       var $77=$76 | 1;
-      HEAP32[(($75)>>2)]=$77;
+      HEAP[$75]=$77;
       __label__ = 14; break;
     case 13: 
       var $79=$2;
       var $80=(($79+4)|0);
       var $81=(($80+96)|0);
       var $82=$81;
-      var $83=HEAP32[(($82)>>2)];
+      var $83=HEAP[$82];
       var $84=$83 & -2;
-      HEAP32[(($82)>>2)]=$84;
+      HEAP[$82]=$84;
       __label__ = 14; break;
     case 14: 
       __label__ = 10; break;
@@ -30008,18 +29875,18 @@ function _op_rcr32($ctx, $src, $val) {
       var $92=(($91+4)|0);
       var $93=(($92+96)|0);
       var $94=$93;
-      var $95=HEAP32[(($94)>>2)];
+      var $95=HEAP[$94];
       var $96=$95 | 128;
-      HEAP32[(($94)>>2)]=$96;
+      HEAP[$94]=$96;
       __label__ = 18; break;
     case 17: 
       var $98=$2;
       var $99=(($98+4)|0);
       var $100=(($99+96)|0);
       var $101=$100;
-      var $102=HEAP32[(($101)>>2)];
+      var $102=HEAP[$101];
       var $103=$102 & -129;
-      HEAP32[(($101)>>2)]=$103;
+      HEAP[$101]=$103;
       __label__ = 18; break;
     case 18: 
       var $105=$ret;
@@ -30030,27 +29897,27 @@ function _op_rcr32($ctx, $src, $val) {
       var $109=(($108+4)|0);
       var $110=(($109+96)|0);
       var $111=$110;
-      var $112=HEAP32[(($111)>>2)];
+      var $112=HEAP[$111];
       var $113=$112 | 64;
-      HEAP32[(($111)>>2)]=$113;
+      HEAP[$111]=$113;
       __label__ = 21; break;
     case 20: 
       var $115=$2;
       var $116=(($115+4)|0);
       var $117=(($116+96)|0);
       var $118=$117;
-      var $119=HEAP32[(($118)>>2)];
+      var $119=HEAP[$118];
       var $120=$119 & -65;
-      HEAP32[(($118)>>2)]=$120;
+      HEAP[$118]=$120;
       __label__ = 21; break;
     case 21: 
       var $122=$2;
       var $123=(($122+4)|0);
       var $124=(($123+96)|0);
       var $125=$124;
-      var $126=HEAP32[(($125)>>2)];
+      var $126=HEAP[$125];
       var $127=$126 & -17;
-      HEAP32[(($125)>>2)]=$127;
+      HEAP[$125]=$127;
       var $128=$ret;
       var $129=_softx86_parity32($128);
       var $130=(($129)|0)!=0;
@@ -30060,18 +29927,18 @@ function _op_rcr32($ctx, $src, $val) {
       var $133=(($132+4)|0);
       var $134=(($133+96)|0);
       var $135=$134;
-      var $136=HEAP32[(($135)>>2)];
+      var $136=HEAP[$135];
       var $137=$136 | 4;
-      HEAP32[(($135)>>2)]=$137;
+      HEAP[$135]=$137;
       __label__ = 24; break;
     case 23: 
       var $139=$2;
       var $140=(($139+4)|0);
       var $141=(($140+96)|0);
       var $142=$141;
-      var $143=HEAP32[(($142)>>2)];
+      var $143=HEAP[$142];
       var $144=$143 & -5;
-      HEAP32[(($142)>>2)]=$144;
+      HEAP[$142]=$144;
       __label__ = 24; break;
     case 24: 
       var $146=$ret;
@@ -30118,7 +29985,7 @@ function _op_rcr_cl_32($ctx, $src) {
   var $8=(($7+4)|0);
   var $9=$8;
   var $10=(($9)|0);
-  var $11=HEAPU8[($10)];
+  var $11=HEAP[$10];
   var $12=(($11)&255);
   var $13=_op_rcr32($3, $4, $12);
   ;
@@ -30150,9 +30017,9 @@ function _op_xor8($ctx, $src, $val) {
       var $11=(($10+4)|0);
       var $12=(($11+96)|0);
       var $13=$12;
-      var $14=HEAP32[(($13)>>2)];
+      var $14=HEAP[$13];
       var $15=$14 & -2050;
-      HEAP32[(($13)>>2)]=$15;
+      HEAP[$13]=$15;
       var $16=$ret;
       var $17=(($16)&255);
       var $18=$17 & 128;
@@ -30163,18 +30030,18 @@ function _op_xor8($ctx, $src, $val) {
       var $22=(($21+4)|0);
       var $23=(($22+96)|0);
       var $24=$23;
-      var $25=HEAP32[(($24)>>2)];
+      var $25=HEAP[$24];
       var $26=$25 | 128;
-      HEAP32[(($24)>>2)]=$26;
+      HEAP[$24]=$26;
       __label__ = 4; break;
     case 3: 
       var $28=$1;
       var $29=(($28+4)|0);
       var $30=(($29+96)|0);
       var $31=$30;
-      var $32=HEAP32[(($31)>>2)];
+      var $32=HEAP[$31];
       var $33=$32 & -129;
-      HEAP32[(($31)>>2)]=$33;
+      HEAP[$31]=$33;
       __label__ = 4; break;
     case 4: 
       var $35=$ret;
@@ -30185,27 +30052,27 @@ function _op_xor8($ctx, $src, $val) {
       var $39=(($38+4)|0);
       var $40=(($39+96)|0);
       var $41=$40;
-      var $42=HEAP32[(($41)>>2)];
+      var $42=HEAP[$41];
       var $43=$42 | 64;
-      HEAP32[(($41)>>2)]=$43;
+      HEAP[$41]=$43;
       __label__ = 7; break;
     case 6: 
       var $45=$1;
       var $46=(($45+4)|0);
       var $47=(($46+96)|0);
       var $48=$47;
-      var $49=HEAP32[(($48)>>2)];
+      var $49=HEAP[$48];
       var $50=$49 & -65;
-      HEAP32[(($48)>>2)]=$50;
+      HEAP[$48]=$50;
       __label__ = 7; break;
     case 7: 
       var $52=$1;
       var $53=(($52+4)|0);
       var $54=(($53+96)|0);
       var $55=$54;
-      var $56=HEAP32[(($55)>>2)];
+      var $56=HEAP[$55];
       var $57=$56 & -17;
-      HEAP32[(($55)>>2)]=$57;
+      HEAP[$55]=$57;
       var $58=$ret;
       var $59=_softx86_parity8($58);
       var $60=(($59)|0)!=0;
@@ -30215,18 +30082,18 @@ function _op_xor8($ctx, $src, $val) {
       var $63=(($62+4)|0);
       var $64=(($63+96)|0);
       var $65=$64;
-      var $66=HEAP32[(($65)>>2)];
+      var $66=HEAP[$65];
       var $67=$66 | 4;
-      HEAP32[(($65)>>2)]=$67;
+      HEAP[$65]=$67;
       __label__ = 10; break;
     case 9: 
       var $69=$1;
       var $70=(($69+4)|0);
       var $71=(($70+96)|0);
       var $72=$71;
-      var $73=HEAP32[(($72)>>2)];
+      var $73=HEAP[$72];
       var $74=$73 & -5;
-      HEAP32[(($72)>>2)]=$74;
+      HEAP[$72]=$74;
       __label__ = 10; break;
     case 10: 
       var $76=$ret;
@@ -30261,9 +30128,9 @@ function _op_xor16($ctx, $src, $val) {
       var $11=(($10+4)|0);
       var $12=(($11+96)|0);
       var $13=$12;
-      var $14=HEAP32[(($13)>>2)];
+      var $14=HEAP[$13];
       var $15=$14 & -2050;
-      HEAP32[(($13)>>2)]=$15;
+      HEAP[$13]=$15;
       var $16=$ret;
       var $17=(($16)&65535);
       var $18=$17 & 32768;
@@ -30274,18 +30141,18 @@ function _op_xor16($ctx, $src, $val) {
       var $22=(($21+4)|0);
       var $23=(($22+96)|0);
       var $24=$23;
-      var $25=HEAP32[(($24)>>2)];
+      var $25=HEAP[$24];
       var $26=$25 | 128;
-      HEAP32[(($24)>>2)]=$26;
+      HEAP[$24]=$26;
       __label__ = 4; break;
     case 3: 
       var $28=$1;
       var $29=(($28+4)|0);
       var $30=(($29+96)|0);
       var $31=$30;
-      var $32=HEAP32[(($31)>>2)];
+      var $32=HEAP[$31];
       var $33=$32 & -129;
-      HEAP32[(($31)>>2)]=$33;
+      HEAP[$31]=$33;
       __label__ = 4; break;
     case 4: 
       var $35=$ret;
@@ -30296,27 +30163,27 @@ function _op_xor16($ctx, $src, $val) {
       var $39=(($38+4)|0);
       var $40=(($39+96)|0);
       var $41=$40;
-      var $42=HEAP32[(($41)>>2)];
+      var $42=HEAP[$41];
       var $43=$42 | 64;
-      HEAP32[(($41)>>2)]=$43;
+      HEAP[$41]=$43;
       __label__ = 7; break;
     case 6: 
       var $45=$1;
       var $46=(($45+4)|0);
       var $47=(($46+96)|0);
       var $48=$47;
-      var $49=HEAP32[(($48)>>2)];
+      var $49=HEAP[$48];
       var $50=$49 & -65;
-      HEAP32[(($48)>>2)]=$50;
+      HEAP[$48]=$50;
       __label__ = 7; break;
     case 7: 
       var $52=$1;
       var $53=(($52+4)|0);
       var $54=(($53+96)|0);
       var $55=$54;
-      var $56=HEAP32[(($55)>>2)];
+      var $56=HEAP[$55];
       var $57=$56 & -17;
-      HEAP32[(($55)>>2)]=$57;
+      HEAP[$55]=$57;
       var $58=$ret;
       var $59=_softx86_parity16($58);
       var $60=(($59)|0)!=0;
@@ -30326,18 +30193,18 @@ function _op_xor16($ctx, $src, $val) {
       var $63=(($62+4)|0);
       var $64=(($63+96)|0);
       var $65=$64;
-      var $66=HEAP32[(($65)>>2)];
+      var $66=HEAP[$65];
       var $67=$66 | 4;
-      HEAP32[(($65)>>2)]=$67;
+      HEAP[$65]=$67;
       __label__ = 10; break;
     case 9: 
       var $69=$1;
       var $70=(($69+4)|0);
       var $71=(($70+96)|0);
       var $72=$71;
-      var $73=HEAP32[(($72)>>2)];
+      var $73=HEAP[$72];
       var $74=$73 & -5;
-      HEAP32[(($72)>>2)]=$74;
+      HEAP[$72]=$74;
       __label__ = 10; break;
     case 10: 
       var $76=$ret;
@@ -30369,9 +30236,9 @@ function _op_xor32($ctx, $src, $val) {
       var $8=(($7+4)|0);
       var $9=(($8+96)|0);
       var $10=$9;
-      var $11=HEAP32[(($10)>>2)];
+      var $11=HEAP[$10];
       var $12=$11 & -2050;
-      HEAP32[(($10)>>2)]=$12;
+      HEAP[$10]=$12;
       var $13=$ret;
       var $14=$13 & -2147483648;
       var $15=(($14)|0)!=0;
@@ -30381,18 +30248,18 @@ function _op_xor32($ctx, $src, $val) {
       var $18=(($17+4)|0);
       var $19=(($18+96)|0);
       var $20=$19;
-      var $21=HEAP32[(($20)>>2)];
+      var $21=HEAP[$20];
       var $22=$21 | 128;
-      HEAP32[(($20)>>2)]=$22;
+      HEAP[$20]=$22;
       __label__ = 4; break;
     case 3: 
       var $24=$1;
       var $25=(($24+4)|0);
       var $26=(($25+96)|0);
       var $27=$26;
-      var $28=HEAP32[(($27)>>2)];
+      var $28=HEAP[$27];
       var $29=$28 & -129;
-      HEAP32[(($27)>>2)]=$29;
+      HEAP[$27]=$29;
       __label__ = 4; break;
     case 4: 
       var $31=$ret;
@@ -30403,27 +30270,27 @@ function _op_xor32($ctx, $src, $val) {
       var $35=(($34+4)|0);
       var $36=(($35+96)|0);
       var $37=$36;
-      var $38=HEAP32[(($37)>>2)];
+      var $38=HEAP[$37];
       var $39=$38 | 64;
-      HEAP32[(($37)>>2)]=$39;
+      HEAP[$37]=$39;
       __label__ = 7; break;
     case 6: 
       var $41=$1;
       var $42=(($41+4)|0);
       var $43=(($42+96)|0);
       var $44=$43;
-      var $45=HEAP32[(($44)>>2)];
+      var $45=HEAP[$44];
       var $46=$45 & -65;
-      HEAP32[(($44)>>2)]=$46;
+      HEAP[$44]=$46;
       __label__ = 7; break;
     case 7: 
       var $48=$1;
       var $49=(($48+4)|0);
       var $50=(($49+96)|0);
       var $51=$50;
-      var $52=HEAP32[(($51)>>2)];
+      var $52=HEAP[$51];
       var $53=$52 & -17;
-      HEAP32[(($51)>>2)]=$53;
+      HEAP[$51]=$53;
       var $54=$ret;
       var $55=_softx86_parity32($54);
       var $56=(($55)|0)!=0;
@@ -30433,18 +30300,18 @@ function _op_xor32($ctx, $src, $val) {
       var $59=(($58+4)|0);
       var $60=(($59+96)|0);
       var $61=$60;
-      var $62=HEAP32[(($61)>>2)];
+      var $62=HEAP[$61];
       var $63=$62 | 4;
-      HEAP32[(($61)>>2)]=$63;
+      HEAP[$61]=$63;
       __label__ = 10; break;
     case 9: 
       var $65=$1;
       var $66=(($65+4)|0);
       var $67=(($66+96)|0);
       var $68=$67;
-      var $69=HEAP32[(($68)>>2)];
+      var $69=HEAP[$68];
       var $70=$69 & -5;
-      HEAP32[(($68)>>2)]=$70;
+      HEAP[$68]=$70;
       __label__ = 10; break;
     case 10: 
       var $72=$ret;
@@ -30479,9 +30346,9 @@ function _op_or8($ctx, $src, $val) {
       var $11=(($10+4)|0);
       var $12=(($11+96)|0);
       var $13=$12;
-      var $14=HEAP32[(($13)>>2)];
+      var $14=HEAP[$13];
       var $15=$14 & -2050;
-      HEAP32[(($13)>>2)]=$15;
+      HEAP[$13]=$15;
       var $16=$ret;
       var $17=(($16)&255);
       var $18=$17 & 128;
@@ -30492,18 +30359,18 @@ function _op_or8($ctx, $src, $val) {
       var $22=(($21+4)|0);
       var $23=(($22+96)|0);
       var $24=$23;
-      var $25=HEAP32[(($24)>>2)];
+      var $25=HEAP[$24];
       var $26=$25 | 128;
-      HEAP32[(($24)>>2)]=$26;
+      HEAP[$24]=$26;
       __label__ = 4; break;
     case 3: 
       var $28=$1;
       var $29=(($28+4)|0);
       var $30=(($29+96)|0);
       var $31=$30;
-      var $32=HEAP32[(($31)>>2)];
+      var $32=HEAP[$31];
       var $33=$32 & -129;
-      HEAP32[(($31)>>2)]=$33;
+      HEAP[$31]=$33;
       __label__ = 4; break;
     case 4: 
       var $35=$ret;
@@ -30514,27 +30381,27 @@ function _op_or8($ctx, $src, $val) {
       var $39=(($38+4)|0);
       var $40=(($39+96)|0);
       var $41=$40;
-      var $42=HEAP32[(($41)>>2)];
+      var $42=HEAP[$41];
       var $43=$42 | 64;
-      HEAP32[(($41)>>2)]=$43;
+      HEAP[$41]=$43;
       __label__ = 7; break;
     case 6: 
       var $45=$1;
       var $46=(($45+4)|0);
       var $47=(($46+96)|0);
       var $48=$47;
-      var $49=HEAP32[(($48)>>2)];
+      var $49=HEAP[$48];
       var $50=$49 & -65;
-      HEAP32[(($48)>>2)]=$50;
+      HEAP[$48]=$50;
       __label__ = 7; break;
     case 7: 
       var $52=$1;
       var $53=(($52+4)|0);
       var $54=(($53+96)|0);
       var $55=$54;
-      var $56=HEAP32[(($55)>>2)];
+      var $56=HEAP[$55];
       var $57=$56 & -17;
-      HEAP32[(($55)>>2)]=$57;
+      HEAP[$55]=$57;
       var $58=$ret;
       var $59=_softx86_parity8($58);
       var $60=(($59)|0)!=0;
@@ -30544,18 +30411,18 @@ function _op_or8($ctx, $src, $val) {
       var $63=(($62+4)|0);
       var $64=(($63+96)|0);
       var $65=$64;
-      var $66=HEAP32[(($65)>>2)];
+      var $66=HEAP[$65];
       var $67=$66 | 4;
-      HEAP32[(($65)>>2)]=$67;
+      HEAP[$65]=$67;
       __label__ = 10; break;
     case 9: 
       var $69=$1;
       var $70=(($69+4)|0);
       var $71=(($70+96)|0);
       var $72=$71;
-      var $73=HEAP32[(($72)>>2)];
+      var $73=HEAP[$72];
       var $74=$73 & -5;
-      HEAP32[(($72)>>2)]=$74;
+      HEAP[$72]=$74;
       __label__ = 10; break;
     case 10: 
       var $76=$ret;
@@ -30590,9 +30457,9 @@ function _op_or16($ctx, $src, $val) {
       var $11=(($10+4)|0);
       var $12=(($11+96)|0);
       var $13=$12;
-      var $14=HEAP32[(($13)>>2)];
+      var $14=HEAP[$13];
       var $15=$14 & -2050;
-      HEAP32[(($13)>>2)]=$15;
+      HEAP[$13]=$15;
       var $16=$ret;
       var $17=(($16)&65535);
       var $18=$17 & 32768;
@@ -30603,18 +30470,18 @@ function _op_or16($ctx, $src, $val) {
       var $22=(($21+4)|0);
       var $23=(($22+96)|0);
       var $24=$23;
-      var $25=HEAP32[(($24)>>2)];
+      var $25=HEAP[$24];
       var $26=$25 | 128;
-      HEAP32[(($24)>>2)]=$26;
+      HEAP[$24]=$26;
       __label__ = 4; break;
     case 3: 
       var $28=$1;
       var $29=(($28+4)|0);
       var $30=(($29+96)|0);
       var $31=$30;
-      var $32=HEAP32[(($31)>>2)];
+      var $32=HEAP[$31];
       var $33=$32 & -129;
-      HEAP32[(($31)>>2)]=$33;
+      HEAP[$31]=$33;
       __label__ = 4; break;
     case 4: 
       var $35=$ret;
@@ -30625,27 +30492,27 @@ function _op_or16($ctx, $src, $val) {
       var $39=(($38+4)|0);
       var $40=(($39+96)|0);
       var $41=$40;
-      var $42=HEAP32[(($41)>>2)];
+      var $42=HEAP[$41];
       var $43=$42 | 64;
-      HEAP32[(($41)>>2)]=$43;
+      HEAP[$41]=$43;
       __label__ = 7; break;
     case 6: 
       var $45=$1;
       var $46=(($45+4)|0);
       var $47=(($46+96)|0);
       var $48=$47;
-      var $49=HEAP32[(($48)>>2)];
+      var $49=HEAP[$48];
       var $50=$49 & -65;
-      HEAP32[(($48)>>2)]=$50;
+      HEAP[$48]=$50;
       __label__ = 7; break;
     case 7: 
       var $52=$1;
       var $53=(($52+4)|0);
       var $54=(($53+96)|0);
       var $55=$54;
-      var $56=HEAP32[(($55)>>2)];
+      var $56=HEAP[$55];
       var $57=$56 & -17;
-      HEAP32[(($55)>>2)]=$57;
+      HEAP[$55]=$57;
       var $58=$ret;
       var $59=_softx86_parity16($58);
       var $60=(($59)|0)!=0;
@@ -30655,18 +30522,18 @@ function _op_or16($ctx, $src, $val) {
       var $63=(($62+4)|0);
       var $64=(($63+96)|0);
       var $65=$64;
-      var $66=HEAP32[(($65)>>2)];
+      var $66=HEAP[$65];
       var $67=$66 | 4;
-      HEAP32[(($65)>>2)]=$67;
+      HEAP[$65]=$67;
       __label__ = 10; break;
     case 9: 
       var $69=$1;
       var $70=(($69+4)|0);
       var $71=(($70+96)|0);
       var $72=$71;
-      var $73=HEAP32[(($72)>>2)];
+      var $73=HEAP[$72];
       var $74=$73 & -5;
-      HEAP32[(($72)>>2)]=$74;
+      HEAP[$72]=$74;
       __label__ = 10; break;
     case 10: 
       var $76=$ret;
@@ -30698,9 +30565,9 @@ function _op_or32($ctx, $src, $val) {
       var $8=(($7+4)|0);
       var $9=(($8+96)|0);
       var $10=$9;
-      var $11=HEAP32[(($10)>>2)];
+      var $11=HEAP[$10];
       var $12=$11 & -2050;
-      HEAP32[(($10)>>2)]=$12;
+      HEAP[$10]=$12;
       var $13=$ret;
       var $14=$13 & -2147483648;
       var $15=(($14)|0)!=0;
@@ -30710,18 +30577,18 @@ function _op_or32($ctx, $src, $val) {
       var $18=(($17+4)|0);
       var $19=(($18+96)|0);
       var $20=$19;
-      var $21=HEAP32[(($20)>>2)];
+      var $21=HEAP[$20];
       var $22=$21 | 128;
-      HEAP32[(($20)>>2)]=$22;
+      HEAP[$20]=$22;
       __label__ = 4; break;
     case 3: 
       var $24=$1;
       var $25=(($24+4)|0);
       var $26=(($25+96)|0);
       var $27=$26;
-      var $28=HEAP32[(($27)>>2)];
+      var $28=HEAP[$27];
       var $29=$28 & -129;
-      HEAP32[(($27)>>2)]=$29;
+      HEAP[$27]=$29;
       __label__ = 4; break;
     case 4: 
       var $31=$ret;
@@ -30732,27 +30599,27 @@ function _op_or32($ctx, $src, $val) {
       var $35=(($34+4)|0);
       var $36=(($35+96)|0);
       var $37=$36;
-      var $38=HEAP32[(($37)>>2)];
+      var $38=HEAP[$37];
       var $39=$38 | 64;
-      HEAP32[(($37)>>2)]=$39;
+      HEAP[$37]=$39;
       __label__ = 7; break;
     case 6: 
       var $41=$1;
       var $42=(($41+4)|0);
       var $43=(($42+96)|0);
       var $44=$43;
-      var $45=HEAP32[(($44)>>2)];
+      var $45=HEAP[$44];
       var $46=$45 & -65;
-      HEAP32[(($44)>>2)]=$46;
+      HEAP[$44]=$46;
       __label__ = 7; break;
     case 7: 
       var $48=$1;
       var $49=(($48+4)|0);
       var $50=(($49+96)|0);
       var $51=$50;
-      var $52=HEAP32[(($51)>>2)];
+      var $52=HEAP[$51];
       var $53=$52 & -17;
-      HEAP32[(($51)>>2)]=$53;
+      HEAP[$51]=$53;
       var $54=$ret;
       var $55=_softx86_parity32($54);
       var $56=(($55)|0)!=0;
@@ -30762,18 +30629,18 @@ function _op_or32($ctx, $src, $val) {
       var $59=(($58+4)|0);
       var $60=(($59+96)|0);
       var $61=$60;
-      var $62=HEAP32[(($61)>>2)];
+      var $62=HEAP[$61];
       var $63=$62 | 4;
-      HEAP32[(($61)>>2)]=$63;
+      HEAP[$61]=$63;
       __label__ = 10; break;
     case 9: 
       var $65=$1;
       var $66=(($65+4)|0);
       var $67=(($66+96)|0);
       var $68=$67;
-      var $69=HEAP32[(($68)>>2)];
+      var $69=HEAP[$68];
       var $70=$69 & -5;
-      HEAP32[(($68)>>2)]=$70;
+      HEAP[$68]=$70;
       __label__ = 10; break;
     case 10: 
       var $72=$ret;
@@ -30808,9 +30675,9 @@ function _op_and8($ctx, $src, $val) {
       var $11=(($10+4)|0);
       var $12=(($11+96)|0);
       var $13=$12;
-      var $14=HEAP32[(($13)>>2)];
+      var $14=HEAP[$13];
       var $15=$14 & -2050;
-      HEAP32[(($13)>>2)]=$15;
+      HEAP[$13]=$15;
       var $16=$ret;
       var $17=(($16)&255);
       var $18=$17 & 128;
@@ -30821,18 +30688,18 @@ function _op_and8($ctx, $src, $val) {
       var $22=(($21+4)|0);
       var $23=(($22+96)|0);
       var $24=$23;
-      var $25=HEAP32[(($24)>>2)];
+      var $25=HEAP[$24];
       var $26=$25 | 128;
-      HEAP32[(($24)>>2)]=$26;
+      HEAP[$24]=$26;
       __label__ = 4; break;
     case 3: 
       var $28=$1;
       var $29=(($28+4)|0);
       var $30=(($29+96)|0);
       var $31=$30;
-      var $32=HEAP32[(($31)>>2)];
+      var $32=HEAP[$31];
       var $33=$32 & -129;
-      HEAP32[(($31)>>2)]=$33;
+      HEAP[$31]=$33;
       __label__ = 4; break;
     case 4: 
       var $35=$ret;
@@ -30843,27 +30710,27 @@ function _op_and8($ctx, $src, $val) {
       var $39=(($38+4)|0);
       var $40=(($39+96)|0);
       var $41=$40;
-      var $42=HEAP32[(($41)>>2)];
+      var $42=HEAP[$41];
       var $43=$42 | 64;
-      HEAP32[(($41)>>2)]=$43;
+      HEAP[$41]=$43;
       __label__ = 7; break;
     case 6: 
       var $45=$1;
       var $46=(($45+4)|0);
       var $47=(($46+96)|0);
       var $48=$47;
-      var $49=HEAP32[(($48)>>2)];
+      var $49=HEAP[$48];
       var $50=$49 & -65;
-      HEAP32[(($48)>>2)]=$50;
+      HEAP[$48]=$50;
       __label__ = 7; break;
     case 7: 
       var $52=$1;
       var $53=(($52+4)|0);
       var $54=(($53+96)|0);
       var $55=$54;
-      var $56=HEAP32[(($55)>>2)];
+      var $56=HEAP[$55];
       var $57=$56 & -17;
-      HEAP32[(($55)>>2)]=$57;
+      HEAP[$55]=$57;
       var $58=$ret;
       var $59=_softx86_parity8($58);
       var $60=(($59)|0)!=0;
@@ -30873,18 +30740,18 @@ function _op_and8($ctx, $src, $val) {
       var $63=(($62+4)|0);
       var $64=(($63+96)|0);
       var $65=$64;
-      var $66=HEAP32[(($65)>>2)];
+      var $66=HEAP[$65];
       var $67=$66 | 4;
-      HEAP32[(($65)>>2)]=$67;
+      HEAP[$65]=$67;
       __label__ = 10; break;
     case 9: 
       var $69=$1;
       var $70=(($69+4)|0);
       var $71=(($70+96)|0);
       var $72=$71;
-      var $73=HEAP32[(($72)>>2)];
+      var $73=HEAP[$72];
       var $74=$73 & -5;
-      HEAP32[(($72)>>2)]=$74;
+      HEAP[$72]=$74;
       __label__ = 10; break;
     case 10: 
       var $76=$ret;
@@ -30919,9 +30786,9 @@ function _op_and16($ctx, $src, $val) {
       var $11=(($10+4)|0);
       var $12=(($11+96)|0);
       var $13=$12;
-      var $14=HEAP32[(($13)>>2)];
+      var $14=HEAP[$13];
       var $15=$14 & -2050;
-      HEAP32[(($13)>>2)]=$15;
+      HEAP[$13]=$15;
       var $16=$ret;
       var $17=(($16)&65535);
       var $18=$17 & 32768;
@@ -30932,18 +30799,18 @@ function _op_and16($ctx, $src, $val) {
       var $22=(($21+4)|0);
       var $23=(($22+96)|0);
       var $24=$23;
-      var $25=HEAP32[(($24)>>2)];
+      var $25=HEAP[$24];
       var $26=$25 | 128;
-      HEAP32[(($24)>>2)]=$26;
+      HEAP[$24]=$26;
       __label__ = 4; break;
     case 3: 
       var $28=$1;
       var $29=(($28+4)|0);
       var $30=(($29+96)|0);
       var $31=$30;
-      var $32=HEAP32[(($31)>>2)];
+      var $32=HEAP[$31];
       var $33=$32 & -129;
-      HEAP32[(($31)>>2)]=$33;
+      HEAP[$31]=$33;
       __label__ = 4; break;
     case 4: 
       var $35=$ret;
@@ -30954,27 +30821,27 @@ function _op_and16($ctx, $src, $val) {
       var $39=(($38+4)|0);
       var $40=(($39+96)|0);
       var $41=$40;
-      var $42=HEAP32[(($41)>>2)];
+      var $42=HEAP[$41];
       var $43=$42 | 64;
-      HEAP32[(($41)>>2)]=$43;
+      HEAP[$41]=$43;
       __label__ = 7; break;
     case 6: 
       var $45=$1;
       var $46=(($45+4)|0);
       var $47=(($46+96)|0);
       var $48=$47;
-      var $49=HEAP32[(($48)>>2)];
+      var $49=HEAP[$48];
       var $50=$49 & -65;
-      HEAP32[(($48)>>2)]=$50;
+      HEAP[$48]=$50;
       __label__ = 7; break;
     case 7: 
       var $52=$1;
       var $53=(($52+4)|0);
       var $54=(($53+96)|0);
       var $55=$54;
-      var $56=HEAP32[(($55)>>2)];
+      var $56=HEAP[$55];
       var $57=$56 & -17;
-      HEAP32[(($55)>>2)]=$57;
+      HEAP[$55]=$57;
       var $58=$ret;
       var $59=_softx86_parity16($58);
       var $60=(($59)|0)!=0;
@@ -30984,18 +30851,18 @@ function _op_and16($ctx, $src, $val) {
       var $63=(($62+4)|0);
       var $64=(($63+96)|0);
       var $65=$64;
-      var $66=HEAP32[(($65)>>2)];
+      var $66=HEAP[$65];
       var $67=$66 | 4;
-      HEAP32[(($65)>>2)]=$67;
+      HEAP[$65]=$67;
       __label__ = 10; break;
     case 9: 
       var $69=$1;
       var $70=(($69+4)|0);
       var $71=(($70+96)|0);
       var $72=$71;
-      var $73=HEAP32[(($72)>>2)];
+      var $73=HEAP[$72];
       var $74=$73 & -5;
-      HEAP32[(($72)>>2)]=$74;
+      HEAP[$72]=$74;
       __label__ = 10; break;
     case 10: 
       var $76=$ret;
@@ -31027,9 +30894,9 @@ function _op_and32($ctx, $src, $val) {
       var $8=(($7+4)|0);
       var $9=(($8+96)|0);
       var $10=$9;
-      var $11=HEAP32[(($10)>>2)];
+      var $11=HEAP[$10];
       var $12=$11 & -2050;
-      HEAP32[(($10)>>2)]=$12;
+      HEAP[$10]=$12;
       var $13=$ret;
       var $14=$13 & -2147483648;
       var $15=(($14)|0)!=0;
@@ -31039,18 +30906,18 @@ function _op_and32($ctx, $src, $val) {
       var $18=(($17+4)|0);
       var $19=(($18+96)|0);
       var $20=$19;
-      var $21=HEAP32[(($20)>>2)];
+      var $21=HEAP[$20];
       var $22=$21 | 128;
-      HEAP32[(($20)>>2)]=$22;
+      HEAP[$20]=$22;
       __label__ = 4; break;
     case 3: 
       var $24=$1;
       var $25=(($24+4)|0);
       var $26=(($25+96)|0);
       var $27=$26;
-      var $28=HEAP32[(($27)>>2)];
+      var $28=HEAP[$27];
       var $29=$28 & -129;
-      HEAP32[(($27)>>2)]=$29;
+      HEAP[$27]=$29;
       __label__ = 4; break;
     case 4: 
       var $31=$ret;
@@ -31061,27 +30928,27 @@ function _op_and32($ctx, $src, $val) {
       var $35=(($34+4)|0);
       var $36=(($35+96)|0);
       var $37=$36;
-      var $38=HEAP32[(($37)>>2)];
+      var $38=HEAP[$37];
       var $39=$38 | 64;
-      HEAP32[(($37)>>2)]=$39;
+      HEAP[$37]=$39;
       __label__ = 7; break;
     case 6: 
       var $41=$1;
       var $42=(($41+4)|0);
       var $43=(($42+96)|0);
       var $44=$43;
-      var $45=HEAP32[(($44)>>2)];
+      var $45=HEAP[$44];
       var $46=$45 & -65;
-      HEAP32[(($44)>>2)]=$46;
+      HEAP[$44]=$46;
       __label__ = 7; break;
     case 7: 
       var $48=$1;
       var $49=(($48+4)|0);
       var $50=(($49+96)|0);
       var $51=$50;
-      var $52=HEAP32[(($51)>>2)];
+      var $52=HEAP[$51];
       var $53=$52 & -17;
-      HEAP32[(($51)>>2)]=$53;
+      HEAP[$51]=$53;
       var $54=$ret;
       var $55=_softx86_parity32($54);
       var $56=(($55)|0)!=0;
@@ -31091,18 +30958,18 @@ function _op_and32($ctx, $src, $val) {
       var $59=(($58+4)|0);
       var $60=(($59+96)|0);
       var $61=$60;
-      var $62=HEAP32[(($61)>>2)];
+      var $62=HEAP[$61];
       var $63=$62 | 4;
-      HEAP32[(($61)>>2)]=$63;
+      HEAP[$61]=$63;
       __label__ = 10; break;
     case 9: 
       var $65=$1;
       var $66=(($65+4)|0);
       var $67=(($66+96)|0);
       var $68=$67;
-      var $69=HEAP32[(($68)>>2)];
+      var $69=HEAP[$68];
       var $70=$69 & -5;
-      HEAP32[(($68)>>2)]=$70;
+      HEAP[$68]=$70;
       __label__ = 10; break;
     case 10: 
       var $72=$ret;
@@ -31137,9 +31004,9 @@ function _op_test8($ctx, $src, $val) {
       var $11=(($10+4)|0);
       var $12=(($11+96)|0);
       var $13=$12;
-      var $14=HEAP32[(($13)>>2)];
+      var $14=HEAP[$13];
       var $15=$14 & -2050;
-      HEAP32[(($13)>>2)]=$15;
+      HEAP[$13]=$15;
       var $16=$ret;
       var $17=(($16)&255);
       var $18=$17 & 128;
@@ -31150,18 +31017,18 @@ function _op_test8($ctx, $src, $val) {
       var $22=(($21+4)|0);
       var $23=(($22+96)|0);
       var $24=$23;
-      var $25=HEAP32[(($24)>>2)];
+      var $25=HEAP[$24];
       var $26=$25 | 128;
-      HEAP32[(($24)>>2)]=$26;
+      HEAP[$24]=$26;
       __label__ = 4; break;
     case 3: 
       var $28=$1;
       var $29=(($28+4)|0);
       var $30=(($29+96)|0);
       var $31=$30;
-      var $32=HEAP32[(($31)>>2)];
+      var $32=HEAP[$31];
       var $33=$32 & -129;
-      HEAP32[(($31)>>2)]=$33;
+      HEAP[$31]=$33;
       __label__ = 4; break;
     case 4: 
       var $35=$ret;
@@ -31172,27 +31039,27 @@ function _op_test8($ctx, $src, $val) {
       var $39=(($38+4)|0);
       var $40=(($39+96)|0);
       var $41=$40;
-      var $42=HEAP32[(($41)>>2)];
+      var $42=HEAP[$41];
       var $43=$42 | 64;
-      HEAP32[(($41)>>2)]=$43;
+      HEAP[$41]=$43;
       __label__ = 7; break;
     case 6: 
       var $45=$1;
       var $46=(($45+4)|0);
       var $47=(($46+96)|0);
       var $48=$47;
-      var $49=HEAP32[(($48)>>2)];
+      var $49=HEAP[$48];
       var $50=$49 & -65;
-      HEAP32[(($48)>>2)]=$50;
+      HEAP[$48]=$50;
       __label__ = 7; break;
     case 7: 
       var $52=$1;
       var $53=(($52+4)|0);
       var $54=(($53+96)|0);
       var $55=$54;
-      var $56=HEAP32[(($55)>>2)];
+      var $56=HEAP[$55];
       var $57=$56 & -17;
-      HEAP32[(($55)>>2)]=$57;
+      HEAP[$55]=$57;
       var $58=$ret;
       var $59=_softx86_parity8($58);
       var $60=(($59)|0)!=0;
@@ -31202,18 +31069,18 @@ function _op_test8($ctx, $src, $val) {
       var $63=(($62+4)|0);
       var $64=(($63+96)|0);
       var $65=$64;
-      var $66=HEAP32[(($65)>>2)];
+      var $66=HEAP[$65];
       var $67=$66 | 4;
-      HEAP32[(($65)>>2)]=$67;
+      HEAP[$65]=$67;
       __label__ = 10; break;
     case 9: 
       var $69=$1;
       var $70=(($69+4)|0);
       var $71=(($70+96)|0);
       var $72=$71;
-      var $73=HEAP32[(($72)>>2)];
+      var $73=HEAP[$72];
       var $74=$73 & -5;
-      HEAP32[(($72)>>2)]=$74;
+      HEAP[$72]=$74;
       __label__ = 10; break;
     case 10: 
       var $76=$ret;
@@ -31297,9 +31164,9 @@ function _op_test16($ctx, $src, $val) {
       var $11=(($10+4)|0);
       var $12=(($11+96)|0);
       var $13=$12;
-      var $14=HEAP32[(($13)>>2)];
+      var $14=HEAP[$13];
       var $15=$14 & -2050;
-      HEAP32[(($13)>>2)]=$15;
+      HEAP[$13]=$15;
       var $16=$ret;
       var $17=(($16)&65535);
       var $18=$17 & 32768;
@@ -31310,18 +31177,18 @@ function _op_test16($ctx, $src, $val) {
       var $22=(($21+4)|0);
       var $23=(($22+96)|0);
       var $24=$23;
-      var $25=HEAP32[(($24)>>2)];
+      var $25=HEAP[$24];
       var $26=$25 | 128;
-      HEAP32[(($24)>>2)]=$26;
+      HEAP[$24]=$26;
       __label__ = 4; break;
     case 3: 
       var $28=$1;
       var $29=(($28+4)|0);
       var $30=(($29+96)|0);
       var $31=$30;
-      var $32=HEAP32[(($31)>>2)];
+      var $32=HEAP[$31];
       var $33=$32 & -129;
-      HEAP32[(($31)>>2)]=$33;
+      HEAP[$31]=$33;
       __label__ = 4; break;
     case 4: 
       var $35=$ret;
@@ -31332,27 +31199,27 @@ function _op_test16($ctx, $src, $val) {
       var $39=(($38+4)|0);
       var $40=(($39+96)|0);
       var $41=$40;
-      var $42=HEAP32[(($41)>>2)];
+      var $42=HEAP[$41];
       var $43=$42 | 64;
-      HEAP32[(($41)>>2)]=$43;
+      HEAP[$41]=$43;
       __label__ = 7; break;
     case 6: 
       var $45=$1;
       var $46=(($45+4)|0);
       var $47=(($46+96)|0);
       var $48=$47;
-      var $49=HEAP32[(($48)>>2)];
+      var $49=HEAP[$48];
       var $50=$49 & -65;
-      HEAP32[(($48)>>2)]=$50;
+      HEAP[$48]=$50;
       __label__ = 7; break;
     case 7: 
       var $52=$1;
       var $53=(($52+4)|0);
       var $54=(($53+96)|0);
       var $55=$54;
-      var $56=HEAP32[(($55)>>2)];
+      var $56=HEAP[$55];
       var $57=$56 & -17;
-      HEAP32[(($55)>>2)]=$57;
+      HEAP[$55]=$57;
       var $58=$ret;
       var $59=(($58) & 255);
       var $60=_softx86_parity8($59);
@@ -31363,18 +31230,18 @@ function _op_test16($ctx, $src, $val) {
       var $64=(($63+4)|0);
       var $65=(($64+96)|0);
       var $66=$65;
-      var $67=HEAP32[(($66)>>2)];
+      var $67=HEAP[$66];
       var $68=$67 | 4;
-      HEAP32[(($66)>>2)]=$68;
+      HEAP[$66]=$68;
       __label__ = 10; break;
     case 9: 
       var $70=$1;
       var $71=(($70+4)|0);
       var $72=(($71+96)|0);
       var $73=$72;
-      var $74=HEAP32[(($73)>>2)];
+      var $74=HEAP[$73];
       var $75=$74 & -5;
-      HEAP32[(($73)>>2)]=$75;
+      HEAP[$73]=$75;
       __label__ = 10; break;
     case 10: 
       var $77=$ret;
@@ -31406,9 +31273,9 @@ function _op_test32($ctx, $src, $val) {
       var $8=(($7+4)|0);
       var $9=(($8+96)|0);
       var $10=$9;
-      var $11=HEAP32[(($10)>>2)];
+      var $11=HEAP[$10];
       var $12=$11 & -2050;
-      HEAP32[(($10)>>2)]=$12;
+      HEAP[$10]=$12;
       var $13=$ret;
       var $14=$13 & -2147483648;
       var $15=(($14)|0)!=0;
@@ -31418,18 +31285,18 @@ function _op_test32($ctx, $src, $val) {
       var $18=(($17+4)|0);
       var $19=(($18+96)|0);
       var $20=$19;
-      var $21=HEAP32[(($20)>>2)];
+      var $21=HEAP[$20];
       var $22=$21 | 128;
-      HEAP32[(($20)>>2)]=$22;
+      HEAP[$20]=$22;
       __label__ = 4; break;
     case 3: 
       var $24=$1;
       var $25=(($24+4)|0);
       var $26=(($25+96)|0);
       var $27=$26;
-      var $28=HEAP32[(($27)>>2)];
+      var $28=HEAP[$27];
       var $29=$28 & -129;
-      HEAP32[(($27)>>2)]=$29;
+      HEAP[$27]=$29;
       __label__ = 4; break;
     case 4: 
       var $31=$ret;
@@ -31440,27 +31307,27 @@ function _op_test32($ctx, $src, $val) {
       var $35=(($34+4)|0);
       var $36=(($35+96)|0);
       var $37=$36;
-      var $38=HEAP32[(($37)>>2)];
+      var $38=HEAP[$37];
       var $39=$38 | 64;
-      HEAP32[(($37)>>2)]=$39;
+      HEAP[$37]=$39;
       __label__ = 7; break;
     case 6: 
       var $41=$1;
       var $42=(($41+4)|0);
       var $43=(($42+96)|0);
       var $44=$43;
-      var $45=HEAP32[(($44)>>2)];
+      var $45=HEAP[$44];
       var $46=$45 & -65;
-      HEAP32[(($44)>>2)]=$46;
+      HEAP[$44]=$46;
       __label__ = 7; break;
     case 7: 
       var $48=$1;
       var $49=(($48+4)|0);
       var $50=(($49+96)|0);
       var $51=$50;
-      var $52=HEAP32[(($51)>>2)];
+      var $52=HEAP[$51];
       var $53=$52 & -17;
-      HEAP32[(($51)>>2)]=$53;
+      HEAP[$51]=$53;
       var $54=$ret;
       var $55=(($54) & 255);
       var $56=_softx86_parity8($55);
@@ -31471,18 +31338,18 @@ function _op_test32($ctx, $src, $val) {
       var $60=(($59+4)|0);
       var $61=(($60+96)|0);
       var $62=$61;
-      var $63=HEAP32[(($62)>>2)];
+      var $63=HEAP[$62];
       var $64=$63 | 4;
-      HEAP32[(($62)>>2)]=$64;
+      HEAP[$62]=$64;
       __label__ = 10; break;
     case 9: 
       var $66=$1;
       var $67=(($66+4)|0);
       var $68=(($67+96)|0);
       var $69=$68;
-      var $70=HEAP32[(($69)>>2)];
+      var $70=HEAP[$69];
       var $71=$70 & -5;
-      HEAP32[(($69)>>2)]=$71;
+      HEAP[$69]=$71;
       __label__ = 10; break;
     case 10: 
       var $73=$ret;
@@ -31518,18 +31385,18 @@ function _op_neg8($ctx, $src) {
       var $12=(($11+4)|0);
       var $13=(($12+96)|0);
       var $14=$13;
-      var $15=HEAP32[(($14)>>2)];
+      var $15=HEAP[$14];
       var $16=$15 | 1;
-      HEAP32[(($14)>>2)]=$16;
+      HEAP[$14]=$16;
       __label__ = 4; break;
     case 3: 
       var $18=$1;
       var $19=(($18+4)|0);
       var $20=(($19+96)|0);
       var $21=$20;
-      var $22=HEAP32[(($21)>>2)];
+      var $22=HEAP[$21];
       var $23=$22 & -2;
-      HEAP32[(($21)>>2)]=$23;
+      HEAP[$21]=$23;
       __label__ = 4; break;
     case 4: 
       var $25=$ret;
@@ -31540,18 +31407,18 @@ function _op_neg8($ctx, $src) {
       var $29=(($28+4)|0);
       var $30=(($29+96)|0);
       var $31=$30;
-      var $32=HEAP32[(($31)>>2)];
+      var $32=HEAP[$31];
       var $33=$32 | 2048;
-      HEAP32[(($31)>>2)]=$33;
+      HEAP[$31]=$33;
       __label__ = 7; break;
     case 6: 
       var $35=$1;
       var $36=(($35+4)|0);
       var $37=(($36+96)|0);
       var $38=$37;
-      var $39=HEAP32[(($38)>>2)];
+      var $39=HEAP[$38];
       var $40=$39 & -2049;
-      HEAP32[(($38)>>2)]=$40;
+      HEAP[$38]=$40;
       __label__ = 7; break;
     case 7: 
       var $42=$ret;
@@ -31564,18 +31431,18 @@ function _op_neg8($ctx, $src) {
       var $48=(($47+4)|0);
       var $49=(($48+96)|0);
       var $50=$49;
-      var $51=HEAP32[(($50)>>2)];
+      var $51=HEAP[$50];
       var $52=$51 | 128;
-      HEAP32[(($50)>>2)]=$52;
+      HEAP[$50]=$52;
       __label__ = 10; break;
     case 9: 
       var $54=$1;
       var $55=(($54+4)|0);
       var $56=(($55+96)|0);
       var $57=$56;
-      var $58=HEAP32[(($57)>>2)];
+      var $58=HEAP[$57];
       var $59=$58 & -129;
-      HEAP32[(($57)>>2)]=$59;
+      HEAP[$57]=$59;
       __label__ = 10; break;
     case 10: 
       var $61=$ret;
@@ -31586,27 +31453,27 @@ function _op_neg8($ctx, $src) {
       var $65=(($64+4)|0);
       var $66=(($65+96)|0);
       var $67=$66;
-      var $68=HEAP32[(($67)>>2)];
+      var $68=HEAP[$67];
       var $69=$68 | 64;
-      HEAP32[(($67)>>2)]=$69;
+      HEAP[$67]=$69;
       __label__ = 13; break;
     case 12: 
       var $71=$1;
       var $72=(($71+4)|0);
       var $73=(($72+96)|0);
       var $74=$73;
-      var $75=HEAP32[(($74)>>2)];
+      var $75=HEAP[$74];
       var $76=$75 & -65;
-      HEAP32[(($74)>>2)]=$76;
+      HEAP[$74]=$76;
       __label__ = 13; break;
     case 13: 
       var $78=$1;
       var $79=(($78+4)|0);
       var $80=(($79+96)|0);
       var $81=$80;
-      var $82=HEAP32[(($81)>>2)];
+      var $82=HEAP[$81];
       var $83=$82 & -17;
-      HEAP32[(($81)>>2)]=$83;
+      HEAP[$81]=$83;
       var $84=$ret;
       var $85=_softx86_parity8($84);
       var $86=(($85)|0)!=0;
@@ -31616,18 +31483,18 @@ function _op_neg8($ctx, $src) {
       var $89=(($88+4)|0);
       var $90=(($89+96)|0);
       var $91=$90;
-      var $92=HEAP32[(($91)>>2)];
+      var $92=HEAP[$91];
       var $93=$92 | 4;
-      HEAP32[(($91)>>2)]=$93;
+      HEAP[$91]=$93;
       __label__ = 16; break;
     case 15: 
       var $95=$1;
       var $96=(($95+4)|0);
       var $97=(($96+96)|0);
       var $98=$97;
-      var $99=HEAP32[(($98)>>2)];
+      var $99=HEAP[$98];
       var $100=$99 & -5;
-      HEAP32[(($98)>>2)]=$100;
+      HEAP[$98]=$100;
       __label__ = 16; break;
     case 16: 
       var $102=$ret;
@@ -31663,18 +31530,18 @@ function _op_neg16($ctx, $src) {
       var $12=(($11+4)|0);
       var $13=(($12+96)|0);
       var $14=$13;
-      var $15=HEAP32[(($14)>>2)];
+      var $15=HEAP[$14];
       var $16=$15 | 1;
-      HEAP32[(($14)>>2)]=$16;
+      HEAP[$14]=$16;
       __label__ = 4; break;
     case 3: 
       var $18=$1;
       var $19=(($18+4)|0);
       var $20=(($19+96)|0);
       var $21=$20;
-      var $22=HEAP32[(($21)>>2)];
+      var $22=HEAP[$21];
       var $23=$22 & -2;
-      HEAP32[(($21)>>2)]=$23;
+      HEAP[$21]=$23;
       __label__ = 4; break;
     case 4: 
       var $25=$ret;
@@ -31685,18 +31552,18 @@ function _op_neg16($ctx, $src) {
       var $29=(($28+4)|0);
       var $30=(($29+96)|0);
       var $31=$30;
-      var $32=HEAP32[(($31)>>2)];
+      var $32=HEAP[$31];
       var $33=$32 | 2048;
-      HEAP32[(($31)>>2)]=$33;
+      HEAP[$31]=$33;
       __label__ = 7; break;
     case 6: 
       var $35=$1;
       var $36=(($35+4)|0);
       var $37=(($36+96)|0);
       var $38=$37;
-      var $39=HEAP32[(($38)>>2)];
+      var $39=HEAP[$38];
       var $40=$39 & -2049;
-      HEAP32[(($38)>>2)]=$40;
+      HEAP[$38]=$40;
       __label__ = 7; break;
     case 7: 
       var $42=$ret;
@@ -31709,18 +31576,18 @@ function _op_neg16($ctx, $src) {
       var $48=(($47+4)|0);
       var $49=(($48+96)|0);
       var $50=$49;
-      var $51=HEAP32[(($50)>>2)];
+      var $51=HEAP[$50];
       var $52=$51 | 128;
-      HEAP32[(($50)>>2)]=$52;
+      HEAP[$50]=$52;
       __label__ = 10; break;
     case 9: 
       var $54=$1;
       var $55=(($54+4)|0);
       var $56=(($55+96)|0);
       var $57=$56;
-      var $58=HEAP32[(($57)>>2)];
+      var $58=HEAP[$57];
       var $59=$58 & -129;
-      HEAP32[(($57)>>2)]=$59;
+      HEAP[$57]=$59;
       __label__ = 10; break;
     case 10: 
       var $61=$ret;
@@ -31731,27 +31598,27 @@ function _op_neg16($ctx, $src) {
       var $65=(($64+4)|0);
       var $66=(($65+96)|0);
       var $67=$66;
-      var $68=HEAP32[(($67)>>2)];
+      var $68=HEAP[$67];
       var $69=$68 | 64;
-      HEAP32[(($67)>>2)]=$69;
+      HEAP[$67]=$69;
       __label__ = 13; break;
     case 12: 
       var $71=$1;
       var $72=(($71+4)|0);
       var $73=(($72+96)|0);
       var $74=$73;
-      var $75=HEAP32[(($74)>>2)];
+      var $75=HEAP[$74];
       var $76=$75 & -65;
-      HEAP32[(($74)>>2)]=$76;
+      HEAP[$74]=$76;
       __label__ = 13; break;
     case 13: 
       var $78=$1;
       var $79=(($78+4)|0);
       var $80=(($79+96)|0);
       var $81=$80;
-      var $82=HEAP32[(($81)>>2)];
+      var $82=HEAP[$81];
       var $83=$82 & -17;
-      HEAP32[(($81)>>2)]=$83;
+      HEAP[$81]=$83;
       var $84=$ret;
       var $85=_softx86_parity16($84);
       var $86=(($85)|0)!=0;
@@ -31761,18 +31628,18 @@ function _op_neg16($ctx, $src) {
       var $89=(($88+4)|0);
       var $90=(($89+96)|0);
       var $91=$90;
-      var $92=HEAP32[(($91)>>2)];
+      var $92=HEAP[$91];
       var $93=$92 | 4;
-      HEAP32[(($91)>>2)]=$93;
+      HEAP[$91]=$93;
       __label__ = 16; break;
     case 15: 
       var $95=$1;
       var $96=(($95+4)|0);
       var $97=(($96+96)|0);
       var $98=$97;
-      var $99=HEAP32[(($98)>>2)];
+      var $99=HEAP[$98];
       var $100=$99 & -5;
-      HEAP32[(($98)>>2)]=$100;
+      HEAP[$98]=$100;
       __label__ = 16; break;
     case 16: 
       var $102=$ret;
@@ -31806,18 +31673,18 @@ function _op_neg32($ctx, $src) {
       var $10=(($9+4)|0);
       var $11=(($10+96)|0);
       var $12=$11;
-      var $13=HEAP32[(($12)>>2)];
+      var $13=HEAP[$12];
       var $14=$13 | 1;
-      HEAP32[(($12)>>2)]=$14;
+      HEAP[$12]=$14;
       __label__ = 4; break;
     case 3: 
       var $16=$1;
       var $17=(($16+4)|0);
       var $18=(($17+96)|0);
       var $19=$18;
-      var $20=HEAP32[(($19)>>2)];
+      var $20=HEAP[$19];
       var $21=$20 & -2;
-      HEAP32[(($19)>>2)]=$21;
+      HEAP[$19]=$21;
       __label__ = 4; break;
     case 4: 
       var $23=$ret;
@@ -31828,18 +31695,18 @@ function _op_neg32($ctx, $src) {
       var $27=(($26+4)|0);
       var $28=(($27+96)|0);
       var $29=$28;
-      var $30=HEAP32[(($29)>>2)];
+      var $30=HEAP[$29];
       var $31=$30 | 2048;
-      HEAP32[(($29)>>2)]=$31;
+      HEAP[$29]=$31;
       __label__ = 7; break;
     case 6: 
       var $33=$1;
       var $34=(($33+4)|0);
       var $35=(($34+96)|0);
       var $36=$35;
-      var $37=HEAP32[(($36)>>2)];
+      var $37=HEAP[$36];
       var $38=$37 & -2049;
-      HEAP32[(($36)>>2)]=$38;
+      HEAP[$36]=$38;
       __label__ = 7; break;
     case 7: 
       var $40=$ret;
@@ -31851,18 +31718,18 @@ function _op_neg32($ctx, $src) {
       var $45=(($44+4)|0);
       var $46=(($45+96)|0);
       var $47=$46;
-      var $48=HEAP32[(($47)>>2)];
+      var $48=HEAP[$47];
       var $49=$48 | 128;
-      HEAP32[(($47)>>2)]=$49;
+      HEAP[$47]=$49;
       __label__ = 10; break;
     case 9: 
       var $51=$1;
       var $52=(($51+4)|0);
       var $53=(($52+96)|0);
       var $54=$53;
-      var $55=HEAP32[(($54)>>2)];
+      var $55=HEAP[$54];
       var $56=$55 & -129;
-      HEAP32[(($54)>>2)]=$56;
+      HEAP[$54]=$56;
       __label__ = 10; break;
     case 10: 
       var $58=$ret;
@@ -31873,27 +31740,27 @@ function _op_neg32($ctx, $src) {
       var $62=(($61+4)|0);
       var $63=(($62+96)|0);
       var $64=$63;
-      var $65=HEAP32[(($64)>>2)];
+      var $65=HEAP[$64];
       var $66=$65 | 64;
-      HEAP32[(($64)>>2)]=$66;
+      HEAP[$64]=$66;
       __label__ = 13; break;
     case 12: 
       var $68=$1;
       var $69=(($68+4)|0);
       var $70=(($69+96)|0);
       var $71=$70;
-      var $72=HEAP32[(($71)>>2)];
+      var $72=HEAP[$71];
       var $73=$72 & -65;
-      HEAP32[(($71)>>2)]=$73;
+      HEAP[$71]=$73;
       __label__ = 13; break;
     case 13: 
       var $75=$1;
       var $76=(($75+4)|0);
       var $77=(($76+96)|0);
       var $78=$77;
-      var $79=HEAP32[(($78)>>2)];
+      var $79=HEAP[$78];
       var $80=$79 & -17;
-      HEAP32[(($78)>>2)]=$80;
+      HEAP[$78]=$80;
       var $81=$ret;
       var $82=_softx86_parity32($81);
       var $83=(($82)|0)!=0;
@@ -31903,18 +31770,18 @@ function _op_neg32($ctx, $src) {
       var $86=(($85+4)|0);
       var $87=(($86+96)|0);
       var $88=$87;
-      var $89=HEAP32[(($88)>>2)];
+      var $89=HEAP[$88];
       var $90=$89 | 4;
-      HEAP32[(($88)>>2)]=$90;
+      HEAP[$88]=$90;
       __label__ = 16; break;
     case 15: 
       var $92=$1;
       var $93=(($92+4)|0);
       var $94=(($93+96)|0);
       var $95=$94;
-      var $96=HEAP32[(($95)>>2)];
+      var $96=HEAP[$95];
       var $97=$96 & -5;
-      HEAP32[(($95)>>2)]=$97;
+      HEAP[$95]=$97;
       __label__ = 16; break;
     case 16: 
       var $99=$ret;
@@ -31942,7 +31809,7 @@ function _op_mul8($ctx, $src) {
       var $6=(($5)|0);
       var $7=$6;
       var $8=(($7)|0);
-      var $9=HEAPU8[($8)];
+      var $9=HEAP[$8];
       var $10=(($9)&255);
       $result=$10;
       var $11=$2;
@@ -31960,7 +31827,7 @@ function _op_mul8($ctx, $src) {
       var $22=(($21)|0);
       var $23=$22;
       var $24=(($23)|0);
-      HEAP16[(($24)>>1)]=$18;
+      HEAP[$24]=$18;
       var $25=$result;
       var $26=(($25)&65535);
       var $27=$26 >> 8;
@@ -31971,18 +31838,18 @@ function _op_mul8($ctx, $src) {
       var $31=(($30+4)|0);
       var $32=(($31+96)|0);
       var $33=$32;
-      var $34=HEAP32[(($33)>>2)];
+      var $34=HEAP[$33];
       var $35=$34 | 2049;
-      HEAP32[(($33)>>2)]=$35;
+      HEAP[$33]=$35;
       __label__ = 4; break;
     case 3: 
       var $37=$1;
       var $38=(($37+4)|0);
       var $39=(($38+96)|0);
       var $40=$39;
-      var $41=HEAP32[(($40)>>2)];
+      var $41=HEAP[$40];
       var $42=$41 & -2050;
-      HEAP32[(($40)>>2)]=$42;
+      HEAP[$40]=$42;
       __label__ = 4; break;
     case 4: 
       var $44=$result;
@@ -31995,18 +31862,18 @@ function _op_mul8($ctx, $src) {
       var $50=(($49+4)|0);
       var $51=(($50+96)|0);
       var $52=$51;
-      var $53=HEAP32[(($52)>>2)];
+      var $53=HEAP[$52];
       var $54=$53 | 128;
-      HEAP32[(($52)>>2)]=$54;
+      HEAP[$52]=$54;
       __label__ = 7; break;
     case 6: 
       var $56=$1;
       var $57=(($56+4)|0);
       var $58=(($57+96)|0);
       var $59=$58;
-      var $60=HEAP32[(($59)>>2)];
+      var $60=HEAP[$59];
       var $61=$60 & -129;
-      HEAP32[(($59)>>2)]=$61;
+      HEAP[$59]=$61;
       __label__ = 7; break;
     case 7: 
       var $63=$result;
@@ -32017,27 +31884,27 @@ function _op_mul8($ctx, $src) {
       var $67=(($66+4)|0);
       var $68=(($67+96)|0);
       var $69=$68;
-      var $70=HEAP32[(($69)>>2)];
+      var $70=HEAP[$69];
       var $71=$70 | 64;
-      HEAP32[(($69)>>2)]=$71;
+      HEAP[$69]=$71;
       __label__ = 10; break;
     case 9: 
       var $73=$1;
       var $74=(($73+4)|0);
       var $75=(($74+96)|0);
       var $76=$75;
-      var $77=HEAP32[(($76)>>2)];
+      var $77=HEAP[$76];
       var $78=$77 & -65;
-      HEAP32[(($76)>>2)]=$78;
+      HEAP[$76]=$78;
       __label__ = 10; break;
     case 10: 
       var $80=$1;
       var $81=(($80+4)|0);
       var $82=(($81+96)|0);
       var $83=$82;
-      var $84=HEAP32[(($83)>>2)];
+      var $84=HEAP[$83];
       var $85=$84 & -17;
-      HEAP32[(($83)>>2)]=$85;
+      HEAP[$83]=$85;
       var $86=$result;
       var $87=_softx86_parity16($86);
       var $88=(($87)|0)!=0;
@@ -32047,18 +31914,18 @@ function _op_mul8($ctx, $src) {
       var $91=(($90+4)|0);
       var $92=(($91+96)|0);
       var $93=$92;
-      var $94=HEAP32[(($93)>>2)];
+      var $94=HEAP[$93];
       var $95=$94 | 4;
-      HEAP32[(($93)>>2)]=$95;
+      HEAP[$93]=$95;
       __label__ = 13; break;
     case 12: 
       var $97=$1;
       var $98=(($97+4)|0);
       var $99=(($98+96)|0);
       var $100=$99;
-      var $101=HEAP32[(($100)>>2)];
+      var $101=HEAP[$100];
       var $102=$101 & -5;
-      HEAP32[(($100)>>2)]=$102;
+      HEAP[$100]=$102;
       __label__ = 13; break;
     case 13: 
       var $104=$2;
@@ -32086,7 +31953,7 @@ function _op_mul16($ctx, $src) {
       var $6=(($5)|0);
       var $7=$6;
       var $8=(($7)|0);
-      var $9=HEAPU16[(($8)>>1)];
+      var $9=HEAP[$8];
       var $10=(($9)&65535);
       $result=$10;
       var $11=$2;
@@ -32103,7 +31970,7 @@ function _op_mul16($ctx, $src) {
       var $21=(($20)|0);
       var $22=$21;
       var $23=(($22)|0);
-      HEAP16[(($23)>>1)]=$17;
+      HEAP[$23]=$17;
       var $24=$result;
       var $25=$24 >>> 16;
       var $26=(($25) & 65535);
@@ -32113,7 +31980,7 @@ function _op_mul16($ctx, $src) {
       var $30=(($29+8)|0);
       var $31=$30;
       var $32=(($31)|0);
-      HEAP16[(($32)>>1)]=$26;
+      HEAP[$32]=$26;
       var $33=$result;
       var $34=$33 >>> 16;
       var $35=(($34)|0)!=0;
@@ -32123,18 +31990,18 @@ function _op_mul16($ctx, $src) {
       var $38=(($37+4)|0);
       var $39=(($38+96)|0);
       var $40=$39;
-      var $41=HEAP32[(($40)>>2)];
+      var $41=HEAP[$40];
       var $42=$41 | 2049;
-      HEAP32[(($40)>>2)]=$42;
+      HEAP[$40]=$42;
       __label__ = 4; break;
     case 3: 
       var $44=$1;
       var $45=(($44+4)|0);
       var $46=(($45+96)|0);
       var $47=$46;
-      var $48=HEAP32[(($47)>>2)];
+      var $48=HEAP[$47];
       var $49=$48 & -2050;
-      HEAP32[(($47)>>2)]=$49;
+      HEAP[$47]=$49;
       __label__ = 4; break;
     case 4: 
       var $51=$result;
@@ -32146,18 +32013,18 @@ function _op_mul16($ctx, $src) {
       var $56=(($55+4)|0);
       var $57=(($56+96)|0);
       var $58=$57;
-      var $59=HEAP32[(($58)>>2)];
+      var $59=HEAP[$58];
       var $60=$59 | 128;
-      HEAP32[(($58)>>2)]=$60;
+      HEAP[$58]=$60;
       __label__ = 7; break;
     case 6: 
       var $62=$1;
       var $63=(($62+4)|0);
       var $64=(($63+96)|0);
       var $65=$64;
-      var $66=HEAP32[(($65)>>2)];
+      var $66=HEAP[$65];
       var $67=$66 & -129;
-      HEAP32[(($65)>>2)]=$67;
+      HEAP[$65]=$67;
       __label__ = 7; break;
     case 7: 
       var $69=$result;
@@ -32168,27 +32035,27 @@ function _op_mul16($ctx, $src) {
       var $73=(($72+4)|0);
       var $74=(($73+96)|0);
       var $75=$74;
-      var $76=HEAP32[(($75)>>2)];
+      var $76=HEAP[$75];
       var $77=$76 | 64;
-      HEAP32[(($75)>>2)]=$77;
+      HEAP[$75]=$77;
       __label__ = 10; break;
     case 9: 
       var $79=$1;
       var $80=(($79+4)|0);
       var $81=(($80+96)|0);
       var $82=$81;
-      var $83=HEAP32[(($82)>>2)];
+      var $83=HEAP[$82];
       var $84=$83 & -65;
-      HEAP32[(($82)>>2)]=$84;
+      HEAP[$82]=$84;
       __label__ = 10; break;
     case 10: 
       var $86=$1;
       var $87=(($86+4)|0);
       var $88=(($87+96)|0);
       var $89=$88;
-      var $90=HEAP32[(($89)>>2)];
+      var $90=HEAP[$89];
       var $91=$90 & -17;
-      HEAP32[(($89)>>2)]=$91;
+      HEAP[$89]=$91;
       var $92=$result;
       var $93=_softx86_parity32($92);
       var $94=(($93)|0)!=0;
@@ -32198,18 +32065,18 @@ function _op_mul16($ctx, $src) {
       var $97=(($96+4)|0);
       var $98=(($97+96)|0);
       var $99=$98;
-      var $100=HEAP32[(($99)>>2)];
+      var $100=HEAP[$99];
       var $101=$100 | 4;
-      HEAP32[(($99)>>2)]=$101;
+      HEAP[$99]=$101;
       __label__ = 13; break;
     case 12: 
       var $103=$1;
       var $104=(($103+4)|0);
       var $105=(($104+96)|0);
       var $106=$105;
-      var $107=HEAP32[(($106)>>2)];
+      var $107=HEAP[$106];
       var $108=$107 & -5;
-      HEAP32[(($106)>>2)]=$108;
+      HEAP[$106]=$108;
       __label__ = 13; break;
     case 13: 
       var $110=$2;
@@ -32219,16 +32086,24 @@ function _op_mul16($ctx, $src) {
   }
 }
 _op_mul16["X"]=1;
+// Warning: Cannot correct overflows of this many bits: 64 at line 32866
+// Warning: 64 bit AND - precision limit may be hit on llvm line 32869
+// Warning: 64 bit AND - precision limit may be hit on llvm line 32913
+// Warning: Cannot correct overflows of this many bits: 64 at line 33333
+// Warning: 64 bit AND - precision limit may be hit on llvm line 33336
+// Warning: 64 bit AND - precision limit may be hit on llvm line 33363
+// Warning: 64 bit AND - precision limit may be hit on llvm line 33389
+// Warning: 64 bit OR - precision limit may be hit on llvm line 33706
 
 function _op_mul32($ctx, $src) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  ;
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
     case 1: 
       var $1;
       var $2;
-      var $result=__stackBase__;
+      var $result;
       $1=$ctx;
       $2=$src;
       var $3=$1;
@@ -32236,155 +32111,109 @@ function _op_mul32($ctx, $src) {
       var $5=(($4)|0);
       var $6=(($5)|0);
       var $7=$6;
-      var $8=HEAP32[(($7)>>2)];
-      var $9$0=$8;
-      var $9$1=0;
-      var $st$13$0=(($result)|0);
-      HEAP32[(($st$13$0)>>2)]=$9$0;
-      var $st$13$1=(($result+4)|0);
-      HEAP32[(($st$13$1)>>2)]=$9$1;
+      var $8=HEAP[$7];
+      var $9=(($8)>>>0);
+      $result=$9;
       var $10=$2;
-      var $11$0=$10;
-      var $11$1=0;
-      var $st$20$0=(($result)|0);
-      var $12$0=HEAP32[(($st$20$0)>>2)];
-      var $st$20$1=(($result+4)|0);
-      var $12$1=HEAP32[(($st$20$1)>>2)];
-      var $13$0 = ((($12$0)>>>0)+((($12$1)|0)*4294967296))*((($11$0)>>>0)+((($11$1)|0)*4294967296))>>>0; var $13$1 = Math.min(Math.floor((((($12$0)>>>0)+((($12$1)|0)*4294967296))*((($11$0)>>>0)+((($11$1)|0)*4294967296)))/4294967296), 4294967295);
-      var $st$25$0=(($result)|0);
-      HEAP32[(($st$25$0)>>2)]=$13$0;
-      var $st$25$1=(($result+4)|0);
-      HEAP32[(($st$25$1)>>2)]=$13$1;
-      var $st$29$0=(($result)|0);
-      var $14$0=HEAP32[(($st$29$0)>>2)];
-      var $st$29$1=(($result+4)|0);
-      var $14$1=HEAP32[(($st$29$1)>>2)];
-      var $$emscripten$temp$0$0=-1;
-      var $$emscripten$temp$0$1=0;
-      var $15$0=$14$0 & $$emscripten$temp$0$0;
-      var $15$1=$14$1 & $$emscripten$temp$0$1;
-      var $16$0=$15$0;
-      var $16=$16$0;
+      var $11=(($10)>>>0);
+      var $12=$result;
+      var $13=$12*$11;
+      $result=$13;
+      var $14=$result;
+      var $15=Runtime.and64($14, 4294967295);
+      var $16=(($15) & 4294967295);
       var $17=$1;
       var $18=(($17+4)|0);
       var $19=(($18)|0);
       var $20=(($19)|0);
       var $21=$20;
-      HEAP32[(($21)>>2)]=$16;
-      var $st$45$0=(($result)|0);
-      var $22$0=HEAP32[(($st$45$0)>>2)];
-      var $st$45$1=(($result+4)|0);
-      var $22$1=HEAP32[(($st$45$1)>>2)];
-      var $23$0=$22$1;
-      var $23$1=0;
-      var $24$0=$23$0;
-      var $24=$24$0;
+      HEAP[$21]=$16;
+      var $22=$result;
+      var $23=(tempBigIntI=($22 >= 0 ? $22 : 18446744073709552000+$22)/4294967296,tempBigIntI-tempBigIntI%1);
+      var $24=(($23) & 4294967295);
       var $25=$1;
       var $26=(($25+4)|0);
       var $27=(($26)|0);
       var $28=(($27+8)|0);
       var $29=$28;
-      HEAP32[(($29)>>2)]=$24;
-      var $st$59$0=(($result)|0);
-      var $30$0=HEAP32[(($st$59$0)>>2)];
-      var $st$59$1=(($result+4)|0);
-      var $30$1=HEAP32[(($st$59$1)>>2)];
-      var $31$0=$30$1;
-      var $31$1=0;
-      var $$emscripten$temp$1$0=0;
-      var $$emscripten$temp$1$1=0;
-      var $32=$31$0 != $$emscripten$temp$1$0 || $31$1 != $$emscripten$temp$1$1;
+      HEAP[$29]=$24;
+      var $30=$result;
+      var $31=(tempBigIntI=($30 >= 0 ? $30 : 18446744073709552000+$30)/4294967296,tempBigIntI-tempBigIntI%1);
+      var $32=($31 >= 9223372036854776000 ? $31-18446744073709552000 : $31)!=0;
       if ($32) { __label__ = 2; break; } else { __label__ = 3; break; }
     case 2: 
       var $34=$1;
       var $35=(($34+4)|0);
       var $36=(($35+96)|0);
       var $37=$36;
-      var $38=HEAP32[(($37)>>2)];
+      var $38=HEAP[$37];
       var $39=$38 | 2049;
-      HEAP32[(($37)>>2)]=$39;
+      HEAP[$37]=$39;
       __label__ = 4; break;
     case 3: 
       var $41=$1;
       var $42=(($41+4)|0);
       var $43=(($42+96)|0);
       var $44=$43;
-      var $45=HEAP32[(($44)>>2)];
+      var $45=HEAP[$44];
       var $46=$45 & -2050;
-      HEAP32[(($44)>>2)]=$46;
+      HEAP[$44]=$46;
       __label__ = 4; break;
     case 4: 
-      var $st$0$0=(($result)|0);
-      var $48$0=HEAP32[(($st$0$0)>>2)];
-      var $st$0$1=(($result+4)|0);
-      var $48$1=HEAP32[(($st$0$1)>>2)];
-      var $$emscripten$temp$2$0=0;
-      var $$emscripten$temp$2$1=-2147483648;
-      var $49$0=$48$0 & $$emscripten$temp$2$0;
-      var $49$1=$48$1 & $$emscripten$temp$2$1;
-      var $$emscripten$temp$3$0=0;
-      var $$emscripten$temp$3$1=0;
-      var $50=$49$0 != $$emscripten$temp$3$0 || $49$1 != $$emscripten$temp$3$1;
+      var $48=$result;
+      var $49=Runtime.and64($48, -9223372036854776000);
+      var $50=($49 >= 9223372036854776000 ? $49-18446744073709552000 : $49)!=0;
       if ($50) { __label__ = 5; break; } else { __label__ = 6; break; }
     case 5: 
       var $52=$1;
       var $53=(($52+4)|0);
       var $54=(($53+96)|0);
       var $55=$54;
-      var $56=HEAP32[(($55)>>2)];
+      var $56=HEAP[$55];
       var $57=$56 | 128;
-      HEAP32[(($55)>>2)]=$57;
+      HEAP[$55]=$57;
       __label__ = 7; break;
     case 6: 
       var $59=$1;
       var $60=(($59+4)|0);
       var $61=(($60+96)|0);
       var $62=$61;
-      var $63=HEAP32[(($62)>>2)];
+      var $63=HEAP[$62];
       var $64=$63 & -129;
-      HEAP32[(($62)>>2)]=$64;
+      HEAP[$62]=$64;
       __label__ = 7; break;
     case 7: 
-      var $st$0$0=(($result)|0);
-      var $66$0=HEAP32[(($st$0$0)>>2)];
-      var $st$0$1=(($result+4)|0);
-      var $66$1=HEAP32[(($st$0$1)>>2)];
-      var $$emscripten$temp$4$0=0;
-      var $$emscripten$temp$4$1=0;
-      var $67=$66$0 != $$emscripten$temp$4$0 || $66$1 != $$emscripten$temp$4$1;
+      var $66=$result;
+      var $67=($66 >= 9223372036854776000 ? $66-18446744073709552000 : $66)!=0;
       if ($67) { __label__ = 9; break; } else { __label__ = 8; break; }
     case 8: 
       var $69=$1;
       var $70=(($69+4)|0);
       var $71=(($70+96)|0);
       var $72=$71;
-      var $73=HEAP32[(($72)>>2)];
+      var $73=HEAP[$72];
       var $74=$73 | 64;
-      HEAP32[(($72)>>2)]=$74;
+      HEAP[$72]=$74;
       __label__ = 10; break;
     case 9: 
       var $76=$1;
       var $77=(($76+4)|0);
       var $78=(($77+96)|0);
       var $79=$78;
-      var $80=HEAP32[(($79)>>2)];
+      var $80=HEAP[$79];
       var $81=$80 & -65;
-      HEAP32[(($79)>>2)]=$81;
+      HEAP[$79]=$81;
       __label__ = 10; break;
     case 10: 
       var $83=$1;
       var $84=(($83+4)|0);
       var $85=(($84+96)|0);
       var $86=$85;
-      var $87=HEAP32[(($86)>>2)];
+      var $87=HEAP[$86];
       var $88=$87 & -17;
-      HEAP32[(($86)>>2)]=$88;
-      var $st$7$0=(($result)|0);
-      var $89$0=HEAP32[(($st$7$0)>>2)];
-      var $st$7$1=(($result+4)|0);
-      var $89$1=HEAP32[(($st$7$1)>>2)];
-      var $90=_softx86_parity64($89$0, $89$1);
-      var $90$0=$90[0];
+      HEAP[$86]=$88;
+      var $89=$result;
+      var $90=_softx86_parity64($89);
       var $91=(($90)|0)!=0;
       if ($91) { __label__ = 11; break; } else { __label__ = 12; break; }
     case 11: 
@@ -32392,22 +32221,22 @@ function _op_mul32($ctx, $src) {
       var $94=(($93+4)|0);
       var $95=(($94+96)|0);
       var $96=$95;
-      var $97=HEAP32[(($96)>>2)];
+      var $97=HEAP[$96];
       var $98=$97 | 4;
-      HEAP32[(($96)>>2)]=$98;
+      HEAP[$96]=$98;
       __label__ = 13; break;
     case 12: 
       var $100=$1;
       var $101=(($100+4)|0);
       var $102=(($101+96)|0);
       var $103=$102;
-      var $104=HEAP32[(($103)>>2)];
+      var $104=HEAP[$103];
       var $105=$104 & -5;
-      HEAP32[(($103)>>2)]=$105;
+      HEAP[$103]=$105;
       __label__ = 13; break;
     case 13: 
       var $107=$2;
-      STACKTOP = __stackBase__;
+      ;
       return $107;
     default: assert(0, "bad label: " + __label__);
   }
@@ -32431,7 +32260,7 @@ function _op_imul8($ctx, $src) {
       var $6=(($5)|0);
       var $7=$6;
       var $8=(($7)|0);
-      var $9=HEAP8[($8)];
+      var $9=HEAP[$8];
       var $10=(($9 << 24) >> 24);
       $result=$10;
       var $11=$2;
@@ -32449,7 +32278,7 @@ function _op_imul8($ctx, $src) {
       var $22=(($21)|0);
       var $23=$22;
       var $24=(($23)|0);
-      HEAP16[(($24)>>1)]=$18;
+      HEAP[$24]=$18;
       var $25=$result;
       var $26=(($25 << 16) >> 16);
       var $27=$26 >> 8;
@@ -32467,18 +32296,18 @@ function _op_imul8($ctx, $src) {
       var $37=(($36+4)|0);
       var $38=(($37+96)|0);
       var $39=$38;
-      var $40=HEAP32[(($39)>>2)];
+      var $40=HEAP[$39];
       var $41=$40 & -2050;
-      HEAP32[(($39)>>2)]=$41;
+      HEAP[$39]=$41;
       __label__ = 5; break;
     case 4: 
       var $43=$1;
       var $44=(($43+4)|0);
       var $45=(($44+96)|0);
       var $46=$45;
-      var $47=HEAP32[(($46)>>2)];
+      var $47=HEAP[$46];
       var $48=$47 | 2049;
-      HEAP32[(($46)>>2)]=$48;
+      HEAP[$46]=$48;
       __label__ = 5; break;
     case 5: 
       var $50=$result;
@@ -32491,18 +32320,18 @@ function _op_imul8($ctx, $src) {
       var $56=(($55+4)|0);
       var $57=(($56+96)|0);
       var $58=$57;
-      var $59=HEAP32[(($58)>>2)];
+      var $59=HEAP[$58];
       var $60=$59 | 128;
-      HEAP32[(($58)>>2)]=$60;
+      HEAP[$58]=$60;
       __label__ = 8; break;
     case 7: 
       var $62=$1;
       var $63=(($62+4)|0);
       var $64=(($63+96)|0);
       var $65=$64;
-      var $66=HEAP32[(($65)>>2)];
+      var $66=HEAP[$65];
       var $67=$66 & -129;
-      HEAP32[(($65)>>2)]=$67;
+      HEAP[$65]=$67;
       __label__ = 8; break;
     case 8: 
       var $69=$result;
@@ -32513,27 +32342,27 @@ function _op_imul8($ctx, $src) {
       var $73=(($72+4)|0);
       var $74=(($73+96)|0);
       var $75=$74;
-      var $76=HEAP32[(($75)>>2)];
+      var $76=HEAP[$75];
       var $77=$76 | 64;
-      HEAP32[(($75)>>2)]=$77;
+      HEAP[$75]=$77;
       __label__ = 11; break;
     case 10: 
       var $79=$1;
       var $80=(($79+4)|0);
       var $81=(($80+96)|0);
       var $82=$81;
-      var $83=HEAP32[(($82)>>2)];
+      var $83=HEAP[$82];
       var $84=$83 & -65;
-      HEAP32[(($82)>>2)]=$84;
+      HEAP[$82]=$84;
       __label__ = 11; break;
     case 11: 
       var $86=$1;
       var $87=(($86+4)|0);
       var $88=(($87+96)|0);
       var $89=$88;
-      var $90=HEAP32[(($89)>>2)];
+      var $90=HEAP[$89];
       var $91=$90 & -17;
-      HEAP32[(($89)>>2)]=$91;
+      HEAP[$89]=$91;
       var $92=$result;
       var $93=_softx86_parity16($92);
       var $94=(($93)|0)!=0;
@@ -32543,18 +32372,18 @@ function _op_imul8($ctx, $src) {
       var $97=(($96+4)|0);
       var $98=(($97+96)|0);
       var $99=$98;
-      var $100=HEAP32[(($99)>>2)];
+      var $100=HEAP[$99];
       var $101=$100 | 4;
-      HEAP32[(($99)>>2)]=$101;
+      HEAP[$99]=$101;
       __label__ = 14; break;
     case 13: 
       var $103=$1;
       var $104=(($103+4)|0);
       var $105=(($104+96)|0);
       var $106=$105;
-      var $107=HEAP32[(($106)>>2)];
+      var $107=HEAP[$106];
       var $108=$107 & -5;
-      HEAP32[(($106)>>2)]=$108;
+      HEAP[$106]=$108;
       __label__ = 14; break;
     case 14: 
       var $110=$2;
@@ -32582,7 +32411,7 @@ function _op_imul16($ctx, $src) {
       var $6=(($5)|0);
       var $7=$6;
       var $8=(($7)|0);
-      var $9=HEAP16[(($8)>>1)];
+      var $9=HEAP[$8];
       var $10=(($9 << 16) >> 16);
       $result=$10;
       var $11=$2;
@@ -32599,7 +32428,7 @@ function _op_imul16($ctx, $src) {
       var $21=(($20)|0);
       var $22=$21;
       var $23=(($22)|0);
-      HEAP16[(($23)>>1)]=$17;
+      HEAP[$23]=$17;
       var $24=$result;
       var $25=$24 >> 16;
       var $26=(($25) & 65535);
@@ -32609,7 +32438,7 @@ function _op_imul16($ctx, $src) {
       var $30=(($29+8)|0);
       var $31=$30;
       var $32=(($31)|0);
-      HEAP16[(($32)>>1)]=$26;
+      HEAP[$32]=$26;
       var $33=$result;
       var $34=$33 >> 16;
       var $35=(($34)|0)==0;
@@ -32625,18 +32454,18 @@ function _op_imul16($ctx, $src) {
       var $43=(($42+4)|0);
       var $44=(($43+96)|0);
       var $45=$44;
-      var $46=HEAP32[(($45)>>2)];
+      var $46=HEAP[$45];
       var $47=$46 & -2050;
-      HEAP32[(($45)>>2)]=$47;
+      HEAP[$45]=$47;
       __label__ = 5; break;
     case 4: 
       var $49=$1;
       var $50=(($49+4)|0);
       var $51=(($50+96)|0);
       var $52=$51;
-      var $53=HEAP32[(($52)>>2)];
+      var $53=HEAP[$52];
       var $54=$53 | 2049;
-      HEAP32[(($52)>>2)]=$54;
+      HEAP[$52]=$54;
       __label__ = 5; break;
     case 5: 
       var $56=$result;
@@ -32648,18 +32477,18 @@ function _op_imul16($ctx, $src) {
       var $61=(($60+4)|0);
       var $62=(($61+96)|0);
       var $63=$62;
-      var $64=HEAP32[(($63)>>2)];
+      var $64=HEAP[$63];
       var $65=$64 | 128;
-      HEAP32[(($63)>>2)]=$65;
+      HEAP[$63]=$65;
       __label__ = 8; break;
     case 7: 
       var $67=$1;
       var $68=(($67+4)|0);
       var $69=(($68+96)|0);
       var $70=$69;
-      var $71=HEAP32[(($70)>>2)];
+      var $71=HEAP[$70];
       var $72=$71 & -129;
-      HEAP32[(($70)>>2)]=$72;
+      HEAP[$70]=$72;
       __label__ = 8; break;
     case 8: 
       var $74=$result;
@@ -32670,27 +32499,27 @@ function _op_imul16($ctx, $src) {
       var $78=(($77+4)|0);
       var $79=(($78+96)|0);
       var $80=$79;
-      var $81=HEAP32[(($80)>>2)];
+      var $81=HEAP[$80];
       var $82=$81 | 64;
-      HEAP32[(($80)>>2)]=$82;
+      HEAP[$80]=$82;
       __label__ = 11; break;
     case 10: 
       var $84=$1;
       var $85=(($84+4)|0);
       var $86=(($85+96)|0);
       var $87=$86;
-      var $88=HEAP32[(($87)>>2)];
+      var $88=HEAP[$87];
       var $89=$88 & -65;
-      HEAP32[(($87)>>2)]=$89;
+      HEAP[$87]=$89;
       __label__ = 11; break;
     case 11: 
       var $91=$1;
       var $92=(($91+4)|0);
       var $93=(($92+96)|0);
       var $94=$93;
-      var $95=HEAP32[(($94)>>2)];
+      var $95=HEAP[$94];
       var $96=$95 & -17;
-      HEAP32[(($94)>>2)]=$96;
+      HEAP[$94]=$96;
       var $97=$result;
       var $98=_softx86_parity32($97);
       var $99=(($98)|0)!=0;
@@ -32700,18 +32529,18 @@ function _op_imul16($ctx, $src) {
       var $102=(($101+4)|0);
       var $103=(($102+96)|0);
       var $104=$103;
-      var $105=HEAP32[(($104)>>2)];
+      var $105=HEAP[$104];
       var $106=$105 | 4;
-      HEAP32[(($104)>>2)]=$106;
+      HEAP[$104]=$106;
       __label__ = 14; break;
     case 13: 
       var $108=$1;
       var $109=(($108+4)|0);
       var $110=(($109+96)|0);
       var $111=$110;
-      var $112=HEAP32[(($111)>>2)];
+      var $112=HEAP[$111];
       var $113=$112 & -5;
-      HEAP32[(($111)>>2)]=$113;
+      HEAP[$111]=$113;
       __label__ = 14; break;
     case 14: 
       var $115=$2;
@@ -32723,14 +32552,14 @@ function _op_imul16($ctx, $src) {
 _op_imul16["X"]=1;
 
 function _op_imul32($ctx, $src) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  ;
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
     case 1: 
       var $1;
       var $2;
-      var $result=__stackBase__;
+      var $result;
       $1=$ctx;
       $2=$src;
       var $3=$1;
@@ -32738,172 +32567,117 @@ function _op_imul32($ctx, $src) {
       var $5=(($4)|0);
       var $6=(($5)|0);
       var $7=$6;
-      var $8=HEAP32[(($7)>>2)];
-      var $9$0=$8;
-      var $9$1=(($8|0) < 0 ? -1 : 0);
-      var $st$13$0=(($result)|0);
-      HEAP32[(($st$13$0)>>2)]=$9$0;
-      var $st$13$1=(($result+4)|0);
-      HEAP32[(($st$13$1)>>2)]=$9$1;
+      var $8=HEAP[$7];
+      var $9=(($8)|0);
+      $result=$9;
       var $10=$2;
-      var $11$0=$10;
-      var $11$1=(($10|0) < 0 ? -1 : 0);
-      var $st$20$0=(($result)|0);
-      var $12$0=HEAP32[(($st$20$0)>>2)];
-      var $st$20$1=(($result+4)|0);
-      var $12$1=HEAP32[(($st$20$1)>>2)];
-      var $13$0 = ((($12$0)>>>0)+((($12$1)|0)*4294967296))*((($11$0)>>>0)+((($11$1)|0)*4294967296))>>>0; var $13$1 = Math.min(Math.floor((((($12$0)>>>0)+((($12$1)|0)*4294967296))*((($11$0)>>>0)+((($11$1)|0)*4294967296)))/4294967296), 4294967295);
-      var $st$25$0=(($result)|0);
-      HEAP32[(($st$25$0)>>2)]=$13$0;
-      var $st$25$1=(($result+4)|0);
-      HEAP32[(($st$25$1)>>2)]=$13$1;
-      var $st$29$0=(($result)|0);
-      var $14$0=HEAP32[(($st$29$0)>>2)];
-      var $st$29$1=(($result+4)|0);
-      var $14$1=HEAP32[(($st$29$1)>>2)];
-      var $$emscripten$temp$0$0=-1;
-      var $$emscripten$temp$0$1=0;
-      var $15$0=$14$0 & $$emscripten$temp$0$0;
-      var $15$1=$14$1 & $$emscripten$temp$0$1;
-      var $16$0=$15$0;
-      var $16=$16$0&65535;
+      var $11=(($10)|0);
+      var $12=$result;
+      var $13=$12*$11;
+      $result=$13;
+      var $14=$result;
+      var $15=Runtime.and64($14, 4294967295);
+      var $16=(($15) & 65535);
       var $17=(($16)&65535);
       var $18=$1;
       var $19=(($18+4)|0);
       var $20=(($19)|0);
       var $21=(($20)|0);
       var $22=$21;
-      HEAP32[(($22)>>2)]=$17;
-      var $st$46$0=(($result)|0);
-      var $23$0=HEAP32[(($st$46$0)>>2)];
-      var $st$46$1=(($result+4)|0);
-      var $23$1=HEAP32[(($st$46$1)>>2)];
-      var $24$0=$23$1;
-      var $24$1=(($23$1|0) < 0 ? -1 : 0);
-      var $25$0=$24$0;
-      var $25=$25$0&65535;
+      HEAP[$22]=$17;
+      var $23=$result;
+      var $24=(tempBigIntI=($23 >= 9223372036854776000 ? $23-18446744073709552000 : $23)/4294967296,tempBigIntI-tempBigIntI%1);
+      var $25=(($24) & 65535);
       var $26=(($25)&65535);
       var $27=$1;
       var $28=(($27+4)|0);
       var $29=(($28)|0);
       var $30=(($29+8)|0);
       var $31=$30;
-      HEAP32[(($31)>>2)]=$26;
-      var $st$61$0=(($result)|0);
-      var $32$0=HEAP32[(($st$61$0)>>2)];
-      var $st$61$1=(($result+4)|0);
-      var $32$1=HEAP32[(($st$61$1)>>2)];
-      var $33$0=$32$1;
-      var $33$1=(($32$1|0) < 0 ? -1 : 0);
-      var $$emscripten$temp$1$0=0;
-      var $$emscripten$temp$1$1=0;
-      var $34=$33$0 == $$emscripten$temp$1$0 && $33$1 == $$emscripten$temp$1$1;
+      HEAP[$31]=$26;
+      var $32=$result;
+      var $33=(tempBigIntI=($32 >= 9223372036854776000 ? $32-18446744073709552000 : $32)/4294967296,tempBigIntI-tempBigIntI%1);
+      var $34=($33 >= 9223372036854776000 ? $33-18446744073709552000 : $33)==0;
       if ($34) { __label__ = 3; break; } else { __label__ = 2; break; }
     case 2: 
-      var $st$0$0=(($result)|0);
-      var $36$0=HEAP32[(($st$0$0)>>2)];
-      var $st$0$1=(($result+4)|0);
-      var $36$1=HEAP32[(($st$0$1)>>2)];
-      var $37$0=$36$1;
-      var $37$1=(($36$1|0) < 0 ? -1 : 0);
-      var $$emscripten$temp$2$0=-1;
-      var $$emscripten$temp$2$1=0;
-      var $38$0=$37$0 & $$emscripten$temp$2$0;
-      var $38$1=$37$1 & $$emscripten$temp$2$1;
-      var $$emscripten$temp$3$0=-1;
-      var $$emscripten$temp$3$1=0;
-      var $39=$38$0 == $$emscripten$temp$3$0 && $38$1 == $$emscripten$temp$3$1;
+      var $36=$result;
+      var $37=(tempBigIntI=($36 >= 9223372036854776000 ? $36-18446744073709552000 : $36)/4294967296,tempBigIntI-tempBigIntI%1);
+      var $38=Runtime.and64($37, 4294967295);
+      var $39=($38 >= 9223372036854776000 ? $38-18446744073709552000 : $38)==4294967295;
       if ($39) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
       var $41=$1;
       var $42=(($41+4)|0);
       var $43=(($42+96)|0);
       var $44=$43;
-      var $45=HEAP32[(($44)>>2)];
+      var $45=HEAP[$44];
       var $46=$45 & -2050;
-      HEAP32[(($44)>>2)]=$46;
+      HEAP[$44]=$46;
       __label__ = 5; break;
     case 4: 
       var $48=$1;
       var $49=(($48+4)|0);
       var $50=(($49+96)|0);
       var $51=$50;
-      var $52=HEAP32[(($51)>>2)];
+      var $52=HEAP[$51];
       var $53=$52 | 2049;
-      HEAP32[(($51)>>2)]=$53;
+      HEAP[$51]=$53;
       __label__ = 5; break;
     case 5: 
-      var $st$0$0=(($result)|0);
-      var $55$0=HEAP32[(($st$0$0)>>2)];
-      var $st$0$1=(($result+4)|0);
-      var $55$1=HEAP32[(($st$0$1)>>2)];
-      var $$emscripten$temp$4$0=0;
-      var $$emscripten$temp$4$1=-2147483648;
-      var $56$0=$55$0 & $$emscripten$temp$4$0;
-      var $56$1=$55$1 & $$emscripten$temp$4$1;
-      var $$emscripten$temp$5$0=0;
-      var $$emscripten$temp$5$1=0;
-      var $57=$56$0 != $$emscripten$temp$5$0 || $56$1 != $$emscripten$temp$5$1;
+      var $55=$result;
+      var $56=Runtime.and64($55, -9223372036854776000);
+      var $57=($56 >= 9223372036854776000 ? $56-18446744073709552000 : $56)!=0;
       if ($57) { __label__ = 6; break; } else { __label__ = 7; break; }
     case 6: 
       var $59=$1;
       var $60=(($59+4)|0);
       var $61=(($60+96)|0);
       var $62=$61;
-      var $63=HEAP32[(($62)>>2)];
+      var $63=HEAP[$62];
       var $64=$63 | 128;
-      HEAP32[(($62)>>2)]=$64;
+      HEAP[$62]=$64;
       __label__ = 8; break;
     case 7: 
       var $66=$1;
       var $67=(($66+4)|0);
       var $68=(($67+96)|0);
       var $69=$68;
-      var $70=HEAP32[(($69)>>2)];
+      var $70=HEAP[$69];
       var $71=$70 & -129;
-      HEAP32[(($69)>>2)]=$71;
+      HEAP[$69]=$71;
       __label__ = 8; break;
     case 8: 
-      var $st$0$0=(($result)|0);
-      var $73$0=HEAP32[(($st$0$0)>>2)];
-      var $st$0$1=(($result+4)|0);
-      var $73$1=HEAP32[(($st$0$1)>>2)];
-      var $$emscripten$temp$6$0=0;
-      var $$emscripten$temp$6$1=0;
-      var $74=$73$0 != $$emscripten$temp$6$0 || $73$1 != $$emscripten$temp$6$1;
+      var $73=$result;
+      var $74=($73 >= 9223372036854776000 ? $73-18446744073709552000 : $73)!=0;
       if ($74) { __label__ = 10; break; } else { __label__ = 9; break; }
     case 9: 
       var $76=$1;
       var $77=(($76+4)|0);
       var $78=(($77+96)|0);
       var $79=$78;
-      var $80=HEAP32[(($79)>>2)];
+      var $80=HEAP[$79];
       var $81=$80 | 64;
-      HEAP32[(($79)>>2)]=$81;
+      HEAP[$79]=$81;
       __label__ = 11; break;
     case 10: 
       var $83=$1;
       var $84=(($83+4)|0);
       var $85=(($84+96)|0);
       var $86=$85;
-      var $87=HEAP32[(($86)>>2)];
+      var $87=HEAP[$86];
       var $88=$87 & -65;
-      HEAP32[(($86)>>2)]=$88;
+      HEAP[$86]=$88;
       __label__ = 11; break;
     case 11: 
       var $90=$1;
       var $91=(($90+4)|0);
       var $92=(($91+96)|0);
       var $93=$92;
-      var $94=HEAP32[(($93)>>2)];
+      var $94=HEAP[$93];
       var $95=$94 & -17;
-      HEAP32[(($93)>>2)]=$95;
-      var $st$7$0=(($result)|0);
-      var $96$0=HEAP32[(($st$7$0)>>2)];
-      var $st$7$1=(($result+4)|0);
-      var $96$1=HEAP32[(($st$7$1)>>2)];
-      var $97=_softx86_parity64($96$0, $96$1);
-      var $97$0=$97[0];
+      HEAP[$93]=$95;
+      var $96=$result;
+      var $97=_softx86_parity64($96);
       var $98=(($97)|0)!=0;
       if ($98) { __label__ = 12; break; } else { __label__ = 13; break; }
     case 12: 
@@ -32911,22 +32685,22 @@ function _op_imul32($ctx, $src) {
       var $101=(($100+4)|0);
       var $102=(($101+96)|0);
       var $103=$102;
-      var $104=HEAP32[(($103)>>2)];
+      var $104=HEAP[$103];
       var $105=$104 | 4;
-      HEAP32[(($103)>>2)]=$105;
+      HEAP[$103]=$105;
       __label__ = 14; break;
     case 13: 
       var $107=$1;
       var $108=(($107+4)|0);
       var $109=(($108+96)|0);
       var $110=$109;
-      var $111=HEAP32[(($110)>>2)];
+      var $111=HEAP[$110];
       var $112=$111 & -5;
-      HEAP32[(($110)>>2)]=$112;
+      HEAP[$110]=$112;
       __label__ = 14; break;
     case 14: 
       var $114=$2;
-      STACKTOP = __stackBase__;
+      ;
       return $114;
     default: assert(0, "bad label: " + __label__);
   }
@@ -32962,7 +32736,7 @@ function _op_div8($ctx, $src) {
       var $15=(($14)|0);
       var $16=$15;
       var $17=(($16)|0);
-      var $18=HEAPU16[(($17)>>1)];
+      var $18=HEAP[$17];
       var $19=(($18)&65535);
       var $20=$3;
       var $21=(($20)&255);
@@ -32987,7 +32761,7 @@ function _op_div8($ctx, $src) {
       var $36=(($35)|0);
       var $37=$36;
       var $38=(($37)|0);
-      var $39=HEAPU16[(($38)>>1)];
+      var $39=HEAP[$38];
       var $40=(($39)&65535);
       var $41=$3;
       var $42=(($41)&255);
@@ -33000,7 +32774,7 @@ function _op_div8($ctx, $src) {
       var $49=(($48)|0);
       var $50=$49;
       var $51=(($50+1)|0);
-      HEAP8[($51)]=$45;
+      HEAP[$51]=$45;
       var $52=$result;
       var $53=(($52) & 255);
       var $54=$2;
@@ -33009,14 +32783,14 @@ function _op_div8($ctx, $src) {
       var $57=(($56)|0);
       var $58=$57;
       var $59=(($58)|0);
-      HEAP8[($59)]=$53;
+      HEAP[$59]=$53;
       var $60=$2;
       var $61=(($60+4)|0);
       var $62=(($61+96)|0);
       var $63=$62;
-      var $64=HEAP32[(($63)>>2)];
+      var $64=HEAP[$63];
       var $65=$64 & -213;
-      HEAP32[(($63)>>2)]=$65;
+      HEAP[$63]=$65;
       var $66=$3;
       $1=$66;
       __label__ = 6; break;
@@ -33058,7 +32832,7 @@ function _op_div16($ctx, $src) {
       var $15=(($14)|0);
       var $16=$15;
       var $17=(($16)|0);
-      var $18=HEAPU16[(($17)>>1)];
+      var $18=HEAP[$17];
       var $19=(($18)&65535);
       $result=$19;
       var $20=$2;
@@ -33067,7 +32841,7 @@ function _op_div16($ctx, $src) {
       var $23=(($22+8)|0);
       var $24=$23;
       var $25=(($24)|0);
-      var $26=HEAPU16[(($25)>>1)];
+      var $26=HEAP[$25];
       var $27=(($26)&65535);
       var $28=$27 << 16;
       var $29=$result;
@@ -33094,7 +32868,7 @@ function _op_div16($ctx, $src) {
       var $45=(($44)|0);
       var $46=$45;
       var $47=(($46)|0);
-      var $48=HEAPU16[(($47)>>1)];
+      var $48=HEAP[$47];
       var $49=(($48)&65535);
       var $50=$3;
       var $51=(($50)&65535);
@@ -33106,7 +32880,7 @@ function _op_div16($ctx, $src) {
       var $57=(($56+8)|0);
       var $58=$57;
       var $59=(($58)|0);
-      HEAP16[(($59)>>1)]=$53;
+      HEAP[$59]=$53;
       var $60=$result;
       var $61=(($60) & 65535);
       var $62=$2;
@@ -33115,14 +32889,14 @@ function _op_div16($ctx, $src) {
       var $65=(($64)|0);
       var $66=$65;
       var $67=(($66)|0);
-      HEAP16[(($67)>>1)]=$61;
+      HEAP[$67]=$61;
       var $68=$2;
       var $69=(($68+4)|0);
       var $70=(($69+96)|0);
       var $71=$70;
-      var $72=HEAP32[(($71)>>2)];
+      var $72=HEAP[$71];
       var $73=$72 & -213;
-      HEAP32[(($71)>>2)]=$73;
+      HEAP[$71]=$73;
       var $74=$3;
       $1=$74;
       __label__ = 6; break;
@@ -33136,7 +32910,7 @@ function _op_div16($ctx, $src) {
 _op_div16["X"]=1;
 
 function _op_div32($ctx, $src) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  ;
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -33144,7 +32918,7 @@ function _op_div32($ctx, $src) {
       var $1;
       var $2;
       var $3;
-      var $result=__stackBase__;
+      var $result;
       $2=$ctx;
       $3=$src;
       var $4=$3;
@@ -33162,52 +32936,27 @@ function _op_div32($ctx, $src) {
       var $13=(($12)|0);
       var $14=(($13)|0);
       var $15=$14;
-      var $16=HEAP32[(($15)>>2)];
-      var $17$0=$16;
-      var $17$1=0;
-      var $st$8$0=(($result)|0);
-      HEAP32[(($st$8$0)>>2)]=$17$0;
-      var $st$8$1=(($result+4)|0);
-      HEAP32[(($st$8$1)>>2)]=$17$1;
+      var $16=HEAP[$15];
+      var $17=(($16)>>>0);
+      $result=$17;
       var $18=$2;
       var $19=(($18+4)|0);
       var $20=(($19)|0);
       var $21=(($20+8)|0);
       var $22=$21;
-      var $23=HEAP32[(($22)>>2)];
-      var $24$0=$23;
-      var $24$1=0;
-      var $25$0=0;
-      var $25$1=$24$0;
-      var $st$22$0=(($result)|0);
-      var $26$0=HEAP32[(($st$22$0)>>2)];
-      var $st$22$1=(($result+4)|0);
-      var $26$1=HEAP32[(($st$22$1)>>2)];
-      var $27$0=$26$0 | $25$0;
-      var $27$1=$26$1 | $25$1;
-      var $st$28$0=(($result)|0);
-      HEAP32[(($st$28$0)>>2)]=$27$0;
-      var $st$28$1=(($result+4)|0);
-      HEAP32[(($st$28$1)>>2)]=$27$1;
+      var $23=HEAP[$22];
+      var $24=(($23)>>>0);
+      var $25=$24*4294967296;
+      var $26=$result;
+      var $27=Runtime.or64($26, $25);
+      $result=$27;
       var $28=$3;
-      var $29$0=$28;
-      var $29$1=0;
-      var $st$35$0=(($result)|0);
-      var $30$0=HEAP32[(($st$35$0)>>2)];
-      var $st$35$1=(($result+4)|0);
-      var $30$1=HEAP32[(($st$35$1)>>2)];
-      var $31$0 = Math.floor(((($30$0)>>>0)+((($30$1)>>>0)*4294967296))/((($29$0)>>>0)+((($29$1)>>>0)*4294967296)))>>>0; var $31$1 = Math.min(Math.floor((Math.floor(((($30$0)>>>0)+((($30$1)>>>0)*4294967296))/((($29$0)>>>0)+((($29$1)>>>0)*4294967296))))/4294967296), 4294967295);
-      var $st$40$0=(($result)|0);
-      HEAP32[(($st$40$0)>>2)]=$31$0;
-      var $st$40$1=(($result+4)|0);
-      HEAP32[(($st$40$1)>>2)]=$31$1;
-      var $st$44$0=(($result)|0);
-      var $32$0=HEAP32[(($st$44$0)>>2)];
-      var $st$44$1=(($result+4)|0);
-      var $32$1=HEAP32[(($st$44$1)>>2)];
-      var $$emscripten$temp$0$0=-1;
-      var $$emscripten$temp$0$1=0;
-      var $33=($32$1>>>0) > ($$emscripten$temp$0$1>>>0) || (($32$1>>>0) == ($$emscripten$temp$0$1>>>0) && ($32$0>>>0) >  ($$emscripten$temp$0$0>>>0));
+      var $29=(($28)>>>0);
+      var $30=$result;
+      var $31=Math.floor(($30 >= 0 ? $30 : 18446744073709552000+$30)/($29 >= 0 ? $29 : 18446744073709552000+$29));
+      $result=$31;
+      var $32=$result;
+      var $33=($32 >= 0 ? $32 : 18446744073709552000+$32) > 4294967295;
       if ($33) { __label__ = 4; break; } else { __label__ = 5; break; }
     case 4: 
       var $35=$2;
@@ -33221,7 +32970,7 @@ function _op_div32($ctx, $src) {
       var $41=(($40)|0);
       var $42=(($41)|0);
       var $43=$42;
-      var $44=HEAPU32[(($43)>>2)];
+      var $44=HEAP[$43];
       var $45=$3;
       var $46=(($44)>>>0)%(($45)>>>0);
       var $47=$2;
@@ -33229,37 +32978,34 @@ function _op_div32($ctx, $src) {
       var $49=(($48)|0);
       var $50=(($49+8)|0);
       var $51=$50;
-      HEAP32[(($51)>>2)]=$46;
-      var $st$14$0=(($result)|0);
-      var $52$0=HEAP32[(($st$14$0)>>2)];
-      var $st$14$1=(($result+4)|0);
-      var $52$1=HEAP32[(($st$14$1)>>2)];
-      var $53$0=$52$0;
-      var $53=$53$0;
+      HEAP[$51]=$46;
+      var $52=$result;
+      var $53=(($52) & 4294967295);
       var $54=$2;
       var $55=(($54+4)|0);
       var $56=(($55)|0);
       var $57=(($56)|0);
       var $58=$57;
-      HEAP32[(($58)>>2)]=$53;
+      HEAP[$58]=$53;
       var $59=$2;
       var $60=(($59+4)|0);
       var $61=(($60+96)|0);
       var $62=$61;
-      var $63=HEAP32[(($62)>>2)];
+      var $63=HEAP[$62];
       var $64=$63 & -213;
-      HEAP32[(($62)>>2)]=$64;
+      HEAP[$62]=$64;
       var $65=$3;
       $1=$65;
       __label__ = 6; break;
     case 6: 
       var $67=$1;
-      STACKTOP = __stackBase__;
+      ;
       return $67;
     default: assert(0, "bad label: " + __label__);
   }
 }
 _op_div32["X"]=1;
+// Warning: 64 bit OR - precision limit may be hit on llvm line 34002
 
 function _op_idiv8($ctx, $src) {
   ;
@@ -33290,7 +33036,7 @@ function _op_idiv8($ctx, $src) {
       var $15=(($14)|0);
       var $16=$15;
       var $17=(($16)|0);
-      var $18=HEAP16[(($17)>>1)];
+      var $18=HEAP[$17];
       var $19=(($18 << 16) >> 16);
       var $20=$3;
       var $21=(($20 << 24) >> 24);
@@ -33319,7 +33065,7 @@ function _op_idiv8($ctx, $src) {
       var $39=(($38)|0);
       var $40=$39;
       var $41=(($40)|0);
-      var $42=HEAP16[(($41)>>1)];
+      var $42=HEAP[$41];
       var $43=(($42 << 16) >> 16);
       var $44=$3;
       var $45=(($44 << 24) >> 24);
@@ -33331,7 +33077,7 @@ function _op_idiv8($ctx, $src) {
       var $51=(($50)|0);
       var $52=$51;
       var $53=(($52+1)|0);
-      HEAP8[($53)]=$47;
+      HEAP[$53]=$47;
       var $54=$result;
       var $55=(($54) & 255);
       var $56=$2;
@@ -33340,14 +33086,14 @@ function _op_idiv8($ctx, $src) {
       var $59=(($58)|0);
       var $60=$59;
       var $61=(($60)|0);
-      HEAP8[($61)]=$55;
+      HEAP[$61]=$55;
       var $62=$2;
       var $63=(($62+4)|0);
       var $64=(($63+96)|0);
       var $65=$64;
-      var $66=HEAP32[(($65)>>2)];
+      var $66=HEAP[$65];
       var $67=$66 & -213;
-      HEAP32[(($65)>>2)]=$67;
+      HEAP[$65]=$67;
       var $68=$3;
       $1=$68;
       __label__ = 7; break;
@@ -33389,7 +33135,7 @@ function _op_idiv16($ctx, $src) {
       var $15=(($14)|0);
       var $16=$15;
       var $17=(($16)|0);
-      var $18=HEAPU16[(($17)>>1)];
+      var $18=HEAP[$17];
       var $19=(($18)&65535);
       $result=$19;
       var $20=$2;
@@ -33398,7 +33144,7 @@ function _op_idiv16($ctx, $src) {
       var $23=(($22+8)|0);
       var $24=$23;
       var $25=(($24)|0);
-      var $26=HEAPU16[(($25)>>1)];
+      var $26=HEAP[$25];
       var $27=(($26)&65535);
       var $28=$27 << 16;
       var $29=$result;
@@ -33429,7 +33175,7 @@ function _op_idiv16($ctx, $src) {
       var $48=(($47)|0);
       var $49=$48;
       var $50=(($49)|0);
-      var $51=HEAP16[(($50)>>1)];
+      var $51=HEAP[$50];
       var $52=(($51 << 16) >> 16);
       var $53=$3;
       var $54=(($53 << 16) >> 16);
@@ -33441,7 +33187,7 @@ function _op_idiv16($ctx, $src) {
       var $60=(($59+8)|0);
       var $61=$60;
       var $62=(($61)|0);
-      HEAP16[(($62)>>1)]=$56;
+      HEAP[$62]=$56;
       var $63=$result;
       var $64=(($63) & 65535);
       var $65=$2;
@@ -33450,14 +33196,14 @@ function _op_idiv16($ctx, $src) {
       var $68=(($67)|0);
       var $69=$68;
       var $70=(($69)|0);
-      HEAP16[(($70)>>1)]=$64;
+      HEAP[$70]=$64;
       var $71=$2;
       var $72=(($71+4)|0);
       var $73=(($72+96)|0);
       var $74=$73;
-      var $75=HEAP32[(($74)>>2)];
+      var $75=HEAP[$74];
       var $76=$75 & -213;
-      HEAP32[(($74)>>2)]=$76;
+      HEAP[$74]=$76;
       var $77=$3;
       $1=$77;
       __label__ = 7; break;
@@ -33471,7 +33217,7 @@ function _op_idiv16($ctx, $src) {
 _op_idiv16["X"]=1;
 
 function _op_idiv32($ctx, $src) {
-  var __stackBase__  = STACKTOP; STACKTOP += 8; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  ;
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -33479,7 +33225,7 @@ function _op_idiv32($ctx, $src) {
       var $1;
       var $2;
       var $3;
-      var $result=__stackBase__;
+      var $result;
       $2=$ctx;
       $3=$src;
       var $4=$3;
@@ -33497,61 +33243,31 @@ function _op_idiv32($ctx, $src) {
       var $13=(($12)|0);
       var $14=(($13)|0);
       var $15=$14;
-      var $16=HEAP32[(($15)>>2)];
-      var $17$0=$16;
-      var $17$1=0;
-      var $st$8$0=(($result)|0);
-      HEAP32[(($st$8$0)>>2)]=$17$0;
-      var $st$8$1=(($result+4)|0);
-      HEAP32[(($st$8$1)>>2)]=$17$1;
+      var $16=HEAP[$15];
+      var $17=(($16)>>>0);
+      $result=$17;
       var $18=$2;
       var $19=(($18+4)|0);
       var $20=(($19)|0);
       var $21=(($20+8)|0);
       var $22=$21;
-      var $23=HEAP32[(($22)>>2)];
-      var $24$0=$23;
-      var $24$1=0;
-      var $25$0=0;
-      var $25$1=$24$0;
-      var $st$22$0=(($result)|0);
-      var $26$0=HEAP32[(($st$22$0)>>2)];
-      var $st$22$1=(($result+4)|0);
-      var $26$1=HEAP32[(($st$22$1)>>2)];
-      var $27$0=$26$0 | $25$0;
-      var $27$1=$26$1 | $25$1;
-      var $st$28$0=(($result)|0);
-      HEAP32[(($st$28$0)>>2)]=$27$0;
-      var $st$28$1=(($result+4)|0);
-      HEAP32[(($st$28$1)>>2)]=$27$1;
+      var $23=HEAP[$22];
+      var $24=(($23)>>>0);
+      var $25=$24*4294967296;
+      var $26=$result;
+      var $27=Runtime.or64($26, $25);
+      $result=$27;
       var $28=$3;
-      var $29$0=$28;
-      var $29$1=0;
-      var $st$35$0=(($result)|0);
-      var $30$0=HEAP32[(($st$35$0)>>2)];
-      var $st$35$1=(($result+4)|0);
-      var $30$1=HEAP32[(($st$35$1)>>2)];
-      var $31$0 = (tempBigIntR=((($30$0)>>>0)+((($30$1)|0)*4294967296))/((($29$0)>>>0)+((($29$1)|0)*4294967296)),tempBigIntR >= 0 ? Math.floor(tempBigIntR) : Math.ceil(tempBigIntR))>>>0; var $31$1 = Math.min(Math.floor(((tempBigIntR=((($30$0)>>>0)+((($30$1)|0)*4294967296))/((($29$0)>>>0)+((($29$1)|0)*4294967296)),tempBigIntR >= 0 ? Math.floor(tempBigIntR) : Math.ceil(tempBigIntR)))/4294967296), 4294967295);
-      var $st$40$0=(($result)|0);
-      HEAP32[(($st$40$0)>>2)]=$31$0;
-      var $st$40$1=(($result+4)|0);
-      HEAP32[(($st$40$1)>>2)]=$31$1;
-      var $st$44$0=(($result)|0);
-      var $32$0=HEAP32[(($st$44$0)>>2)];
-      var $st$44$1=(($result+4)|0);
-      var $32$1=HEAP32[(($st$44$1)>>2)];
-      var $$emscripten$temp$0$0=-2147483648;
-      var $$emscripten$temp$0$1=0;
-      var $33=($32$1|0) < ($$emscripten$temp$0$1|0) || (($32$1|0) == ($$emscripten$temp$0$1|0) && ($32$0>>>0) <  ($$emscripten$temp$0$0>>>0));
+      var $29=(($28)>>>0);
+      var $30=$result;
+      var $31=(tempBigIntR=($30 >= 9223372036854776000 ? $30-18446744073709552000 : $30)/($29 >= 9223372036854776000 ? $29-18446744073709552000 : $29),tempBigIntR >= 0 ? Math.floor(tempBigIntR) : Math.ceil(tempBigIntR));
+      $result=$31;
+      var $32=$result;
+      var $33=($32 >= 9223372036854776000 ? $32-18446744073709552000 : $32) < 2147483648;
       if ($33) { __label__ = 5; break; } else { __label__ = 4; break; }
     case 4: 
-      var $st$0$0=(($result)|0);
-      var $35$0=HEAP32[(($st$0$0)>>2)];
-      var $st$0$1=(($result+4)|0);
-      var $35$1=HEAP32[(($st$0$1)>>2)];
-      var $$emscripten$temp$1$0=-2147483648;
-      var $$emscripten$temp$1$1=0;
-      var $36=($35$1|0) >= ($$emscripten$temp$1$1|0) && (($35$1|0) >  ($$emscripten$temp$1$1|0) || ($35$0>>>0) >= ($$emscripten$temp$1$0>>>0));
+      var $35=$result;
+      var $36=($35 >= 9223372036854776000 ? $35-18446744073709552000 : $35) >= 2147483648;
       if ($36) { __label__ = 5; break; } else { __label__ = 6; break; }
     case 5: 
       var $38=$2;
@@ -33565,7 +33281,7 @@ function _op_idiv32($ctx, $src) {
       var $44=(($43)|0);
       var $45=(($44)|0);
       var $46=$45;
-      var $47=HEAP32[(($46)>>2)];
+      var $47=HEAP[$46];
       var $48=$3;
       var $49=(($47)|0)%(($48)|0);
       var $50=$2;
@@ -33573,32 +33289,28 @@ function _op_idiv32($ctx, $src) {
       var $52=(($51)|0);
       var $53=(($52+8)|0);
       var $54=$53;
-      HEAP32[(($54)>>2)]=$49;
-      var $st$14$0=(($result)|0);
-      var $55$0=HEAP32[(($st$14$0)>>2)];
-      var $st$14$1=(($result+4)|0);
-      var $55$1=HEAP32[(($st$14$1)>>2)];
-      var $56$0=$55$0;
-      var $56=$56$0;
+      HEAP[$54]=$49;
+      var $55=$result;
+      var $56=(($55) & 4294967295);
       var $57=$2;
       var $58=(($57+4)|0);
       var $59=(($58)|0);
       var $60=(($59)|0);
       var $61=$60;
-      HEAP32[(($61)>>2)]=$56;
+      HEAP[$61]=$56;
       var $62=$2;
       var $63=(($62+4)|0);
       var $64=(($63+96)|0);
       var $65=$64;
-      var $66=HEAP32[(($65)>>2)];
+      var $66=HEAP[$65];
       var $67=$66 & -213;
-      HEAP32[(($65)>>2)]=$67;
+      HEAP[$65]=$67;
       var $68=$3;
       $1=$68;
       __label__ = 7; break;
     case 7: 
       var $70=$1;
-      STACKTOP = __stackBase__;
+      ;
       return $70;
     default: assert(0, "bad label: " + __label__);
   }
@@ -33685,7 +33397,7 @@ function _Sfx86OpcodeExec_xor($opcode, $ctx) {
       var $50=(($49)|0);
       var $51=$50;
       var $52=(($51)|0);
-      var $53=HEAP8[($52)];
+      var $53=HEAP[$52];
       var $54=$x1;
       var $55=_op_xor8($46, $53, $54);
       $x1=$55;
@@ -33696,7 +33408,7 @@ function _Sfx86OpcodeExec_xor($opcode, $ctx) {
       var $60=(($59)|0);
       var $61=$60;
       var $62=(($61)|0);
-      HEAP8[($62)]=$56;
+      HEAP[$62]=$56;
       $1=1;
       __label__ = 8; break;
     case 5: 
@@ -33725,7 +33437,7 @@ function _Sfx86OpcodeExec_xor($opcode, $ctx) {
       var $83=(($82)|0);
       var $84=$83;
       var $85=(($84)|0);
-      var $86=HEAP16[(($85)>>1)];
+      var $86=HEAP[$85];
       var $87=$x2;
       var $88=_op_xor16($79, $86, $87);
       $x2=$88;
@@ -33736,7 +33448,7 @@ function _Sfx86OpcodeExec_xor($opcode, $ctx) {
       var $93=(($92)|0);
       var $94=$93;
       var $95=(($94)|0);
-      HEAP16[(($95)>>1)]=$89;
+      HEAP[$95]=$89;
       $1=1;
       __label__ = 8; break;
     case 7: 
@@ -33819,11 +33531,11 @@ function _Sfx86OpcodeDec_xor($opcode, $ctx, $buf) {
       if ($40) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
       var $42=$4;
-      var $43=_sprintf($42, ((STRING_TABLE.__str265)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op2_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op1_tmp)|0),tempInt));
+      var $43=_sprintf($42, ((STRING_TABLE.__str265)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op2_tmp)|0),HEAP[tempInt+4]=((_op1_tmp)|0),tempInt));
       __label__ = 5; break;
     case 4: 
       var $45=$4;
-      var $46=_sprintf($45, ((STRING_TABLE.__str265)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op2_tmp)|0),tempInt));
+      var $46=_sprintf($45, ((STRING_TABLE.__str265)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=((_op2_tmp)|0),tempInt));
       __label__ = 5; break;
     case 5: 
       $1=1;
@@ -33840,7 +33552,7 @@ function _Sfx86OpcodeDec_xor($opcode, $ctx, $buf) {
       var $55=$4;
       var $56=$x1;
       var $57=(($56)&255);
-      var $58=_sprintf($55, ((STRING_TABLE.__str1266)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$57,tempInt));
+      var $58=_sprintf($55, ((STRING_TABLE.__str1266)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$57,tempInt));
       $1=1;
       __label__ = 11; break;
     case 8: 
@@ -33865,7 +33577,7 @@ function _Sfx86OpcodeDec_xor($opcode, $ctx, $buf) {
       var $75=$4;
       var $76=$x2;
       var $77=(($76)&65535);
-      var $78=_sprintf($75, ((STRING_TABLE.__str2267)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$77,tempInt));
+      var $78=_sprintf($75, ((STRING_TABLE.__str2267)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$77,tempInt));
       $1=1;
       __label__ = 11; break;
     case 10: 
@@ -33960,7 +33672,7 @@ function _Sfx86OpcodeExec_or($opcode, $ctx) {
       var $50=(($49)|0);
       var $51=$50;
       var $52=(($51)|0);
-      var $53=HEAP8[($52)];
+      var $53=HEAP[$52];
       var $54=$x1;
       var $55=_op_or8($46, $53, $54);
       $x1=$55;
@@ -33971,7 +33683,7 @@ function _Sfx86OpcodeExec_or($opcode, $ctx) {
       var $60=(($59)|0);
       var $61=$60;
       var $62=(($61)|0);
-      HEAP8[($62)]=$56;
+      HEAP[$62]=$56;
       $1=1;
       __label__ = 8; break;
     case 5: 
@@ -34000,7 +33712,7 @@ function _Sfx86OpcodeExec_or($opcode, $ctx) {
       var $83=(($82)|0);
       var $84=$83;
       var $85=(($84)|0);
-      var $86=HEAP16[(($85)>>1)];
+      var $86=HEAP[$85];
       var $87=$x2;
       var $88=_op_or16($79, $86, $87);
       $x2=$88;
@@ -34011,7 +33723,7 @@ function _Sfx86OpcodeExec_or($opcode, $ctx) {
       var $93=(($92)|0);
       var $94=$93;
       var $95=(($94)|0);
-      HEAP16[(($95)>>1)]=$89;
+      HEAP[$95]=$89;
       $1=1;
       __label__ = 8; break;
     case 7: 
@@ -34094,11 +33806,11 @@ function _Sfx86OpcodeDec_or($opcode, $ctx, $buf) {
       if ($40) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
       var $42=$4;
-      var $43=_sprintf($42, ((STRING_TABLE.__str3268)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op2_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op1_tmp)|0),tempInt));
+      var $43=_sprintf($42, ((STRING_TABLE.__str3268)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op2_tmp)|0),HEAP[tempInt+4]=((_op1_tmp)|0),tempInt));
       __label__ = 5; break;
     case 4: 
       var $45=$4;
-      var $46=_sprintf($45, ((STRING_TABLE.__str3268)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op2_tmp)|0),tempInt));
+      var $46=_sprintf($45, ((STRING_TABLE.__str3268)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=((_op2_tmp)|0),tempInt));
       __label__ = 5; break;
     case 5: 
       $1=1;
@@ -34115,7 +33827,7 @@ function _Sfx86OpcodeDec_or($opcode, $ctx, $buf) {
       var $55=$4;
       var $56=$x1;
       var $57=(($56)&255);
-      var $58=_sprintf($55, ((STRING_TABLE.__str4269)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$57,tempInt));
+      var $58=_sprintf($55, ((STRING_TABLE.__str4269)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$57,tempInt));
       $1=1;
       __label__ = 11; break;
     case 8: 
@@ -34140,7 +33852,7 @@ function _Sfx86OpcodeDec_or($opcode, $ctx, $buf) {
       var $75=$4;
       var $76=$x2;
       var $77=(($76)&65535);
-      var $78=_sprintf($75, ((STRING_TABLE.__str5270)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$77,tempInt));
+      var $78=_sprintf($75, ((STRING_TABLE.__str5270)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$77,tempInt));
       $1=1;
       __label__ = 11; break;
     case 10: 
@@ -34235,7 +33947,7 @@ function _Sfx86OpcodeExec_and($opcode, $ctx) {
       var $50=(($49)|0);
       var $51=$50;
       var $52=(($51)|0);
-      var $53=HEAP8[($52)];
+      var $53=HEAP[$52];
       var $54=$x1;
       var $55=_op_and8($46, $53, $54);
       $x1=$55;
@@ -34246,7 +33958,7 @@ function _Sfx86OpcodeExec_and($opcode, $ctx) {
       var $60=(($59)|0);
       var $61=$60;
       var $62=(($61)|0);
-      HEAP8[($62)]=$56;
+      HEAP[$62]=$56;
       $1=1;
       __label__ = 8; break;
     case 5: 
@@ -34275,7 +33987,7 @@ function _Sfx86OpcodeExec_and($opcode, $ctx) {
       var $83=(($82)|0);
       var $84=$83;
       var $85=(($84)|0);
-      var $86=HEAP16[(($85)>>1)];
+      var $86=HEAP[$85];
       var $87=$x2;
       var $88=_op_and16($79, $86, $87);
       $x2=$88;
@@ -34286,7 +33998,7 @@ function _Sfx86OpcodeExec_and($opcode, $ctx) {
       var $93=(($92)|0);
       var $94=$93;
       var $95=(($94)|0);
-      HEAP16[(($95)>>1)]=$89;
+      HEAP[$95]=$89;
       $1=1;
       __label__ = 8; break;
     case 7: 
@@ -34369,11 +34081,11 @@ function _Sfx86OpcodeDec_and($opcode, $ctx, $buf) {
       if ($40) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
       var $42=$4;
-      var $43=_sprintf($42, ((STRING_TABLE.__str6271)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op2_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op1_tmp)|0),tempInt));
+      var $43=_sprintf($42, ((STRING_TABLE.__str6271)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op2_tmp)|0),HEAP[tempInt+4]=((_op1_tmp)|0),tempInt));
       __label__ = 5; break;
     case 4: 
       var $45=$4;
-      var $46=_sprintf($45, ((STRING_TABLE.__str6271)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op2_tmp)|0),tempInt));
+      var $46=_sprintf($45, ((STRING_TABLE.__str6271)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=((_op2_tmp)|0),tempInt));
       __label__ = 5; break;
     case 5: 
       $1=1;
@@ -34390,7 +34102,7 @@ function _Sfx86OpcodeDec_and($opcode, $ctx, $buf) {
       var $55=$4;
       var $56=$x1;
       var $57=(($56)&255);
-      var $58=_sprintf($55, ((STRING_TABLE.__str7272)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$57,tempInt));
+      var $58=_sprintf($55, ((STRING_TABLE.__str7272)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$57,tempInt));
       $1=1;
       __label__ = 11; break;
     case 8: 
@@ -34415,7 +34127,7 @@ function _Sfx86OpcodeDec_and($opcode, $ctx, $buf) {
       var $75=$4;
       var $76=$x2;
       var $77=(($76)&65535);
-      var $78=_sprintf($75, ((STRING_TABLE.__str8273)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$77,tempInt));
+      var $78=_sprintf($75, ((STRING_TABLE.__str8273)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$77,tempInt));
       $1=1;
       __label__ = 11; break;
     case 10: 
@@ -34510,7 +34222,7 @@ function _Sfx86OpcodeExec_test($opcode, $ctx) {
       var $50=(($49)|0);
       var $51=$50;
       var $52=(($51)|0);
-      var $53=HEAP8[($52)];
+      var $53=HEAP[$52];
       var $54=$x1;
       var $55=_op_test8($46, $53, $54);
       $1=1;
@@ -34541,7 +34253,7 @@ function _Sfx86OpcodeExec_test($opcode, $ctx) {
       var $76=(($75)|0);
       var $77=$76;
       var $78=(($77)|0);
-      var $79=HEAP16[(($78)>>1)];
+      var $79=HEAP[$78];
       var $80=$x2;
       var $81=_op_test16($72, $79, $80);
       $1=1;
@@ -34626,11 +34338,11 @@ function _Sfx86OpcodeDec_test($opcode, $ctx, $buf) {
       if ($40) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
       var $42=$4;
-      var $43=_sprintf($42, ((STRING_TABLE.__str9274)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op2_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op1_tmp)|0),tempInt));
+      var $43=_sprintf($42, ((STRING_TABLE.__str9274)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op2_tmp)|0),HEAP[tempInt+4]=((_op1_tmp)|0),tempInt));
       __label__ = 5; break;
     case 4: 
       var $45=$4;
-      var $46=_sprintf($45, ((STRING_TABLE.__str9274)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op2_tmp)|0),tempInt));
+      var $46=_sprintf($45, ((STRING_TABLE.__str9274)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=((_op2_tmp)|0),tempInt));
       __label__ = 5; break;
     case 5: 
       $1=1;
@@ -34647,7 +34359,7 @@ function _Sfx86OpcodeDec_test($opcode, $ctx, $buf) {
       var $55=$4;
       var $56=$x1;
       var $57=(($56)&255);
-      var $58=_sprintf($55, ((STRING_TABLE.__str10275)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$57,tempInt));
+      var $58=_sprintf($55, ((STRING_TABLE.__str10275)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$57,tempInt));
       $1=1;
       __label__ = 11; break;
     case 8: 
@@ -34672,7 +34384,7 @@ function _Sfx86OpcodeDec_test($opcode, $ctx, $buf) {
       var $75=$4;
       var $76=$x2;
       var $77=(($76)&65535);
-      var $78=_sprintf($75, ((STRING_TABLE.__str11276)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$77,tempInt));
+      var $78=_sprintf($75, ((STRING_TABLE.__str11276)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$77,tempInt));
       $1=1;
       __label__ = 11; break;
     case 10: 
@@ -34761,7 +34473,7 @@ function _Sfx86OpcodeExec_xchg($opcode, $ctx) {
       var $46=(($45+($42<<2))|0);
       var $47=$46;
       var $48=(($47)|0);
-      var $49=HEAP16[(($48)>>1)];
+      var $49=HEAP[$48];
       $tmp=$49;
       var $50=$3;
       var $51=(($50+4)|0);
@@ -34769,7 +34481,7 @@ function _Sfx86OpcodeExec_xchg($opcode, $ctx) {
       var $53=(($52)|0);
       var $54=$53;
       var $55=(($54)|0);
-      var $56=HEAP16[(($55)>>1)];
+      var $56=HEAP[$55];
       var $57=$ro;
       var $58=$3;
       var $59=(($58+4)|0);
@@ -34777,7 +34489,7 @@ function _Sfx86OpcodeExec_xchg($opcode, $ctx) {
       var $61=(($60+($57<<2))|0);
       var $62=$61;
       var $63=(($62)|0);
-      HEAP16[(($63)>>1)]=$56;
+      HEAP[$63]=$56;
       var $64=$tmp;
       var $65=$3;
       var $66=(($65+4)|0);
@@ -34785,7 +34497,7 @@ function _Sfx86OpcodeExec_xchg($opcode, $ctx) {
       var $68=(($67)|0);
       var $69=$68;
       var $70=(($69)|0);
-      HEAP16[(($70)>>1)]=$64;
+      HEAP[$70]=$64;
       $1=1;
       __label__ = 6; break;
     case 5: 
@@ -34855,7 +34567,7 @@ function _Sfx86OpcodeDec_xchg($opcode, $ctx, $buf) {
       var $33=$rm;
       _sx86_dec_full_modregrm($29, $30, 0, $31, $32, $33, ((_op1_tmp)|0), ((_op2_tmp)|0));
       var $34=$4;
-      var $35=_sprintf($34, ((STRING_TABLE.__str12277)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op1_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op2_tmp)|0),tempInt));
+      var $35=_sprintf($34, ((STRING_TABLE.__str12277)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op1_tmp)|0),HEAP[tempInt+4]=((_op2_tmp)|0),tempInt));
       $1=1;
       __label__ = 6; break;
     case 3: 
@@ -34870,8 +34582,8 @@ function _Sfx86OpcodeDec_xchg($opcode, $ctx, $buf) {
       var $44=(($43)&255);
       var $45=(($44-144)|0);
       var $46=((_sx86_regs16+($45<<2))|0);
-      var $47=HEAP32[(($46)>>2)];
-      var $48=_sprintf($42, ((STRING_TABLE.__str13278)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$47,tempInt));
+      var $47=HEAP[$46];
+      var $48=_sprintf($42, ((STRING_TABLE.__str13278)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$47,tempInt));
       $1=1;
       __label__ = 6; break;
     case 5: 
@@ -34991,7 +34703,7 @@ function _Sfx86OpcodeDec_lea($opcode, $ctx, $buf) {
       var $27=$rm;
       _sx86_dec_full_modregrm($24, 1, 0, $25, $26, $27, ((_op1_tmp)|0), ((_op2_tmp)|0));
       var $28=$4;
-      var $29=_sprintf($28, ((STRING_TABLE.__str14279)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op2_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op1_tmp)|0),tempInt));
+      var $29=_sprintf($28, ((STRING_TABLE.__str14279)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op2_tmp)|0),HEAP[tempInt+4]=((_op1_tmp)|0),tempInt));
       $1=1;
       __label__ = 4; break;
     case 3: 
@@ -35044,7 +34756,7 @@ function _op_bound16($ctx, $idx, $upper, $lower) {
       var $22=$2;
       var $23=(($22+4)|0);
       var $24=(($23+108)|0);
-      var $25=HEAP32[(($24)>>2)];
+      var $25=HEAP[$24];
       var $26=_softx86_set_near_instruction_ptr($21, $25);
       var $27=$2;
       var $28=_softx86_int_sw_signal($27, 5);
@@ -35096,7 +34808,7 @@ function _op_bound32($ctx, $idx, $upper, $lower) {
       var $18=$2;
       var $19=(($18+4)|0);
       var $20=(($19+108)|0);
-      var $21=HEAP32[(($20)>>2)];
+      var $21=HEAP[$20];
       var $22=_softx86_set_near_instruction_ptr($17, $21);
       var $23=$2;
       var $24=_softx86_int_sw_signal($23, 5);
@@ -35136,7 +34848,7 @@ function _Sfx86OpcodeExec_bound($opcode, $ctx) {
     case 2: 
       var $8=$3;
       var $9=(($8+200)|0);
-      var $10=HEAP32[(($9)>>2)];
+      var $10=HEAP[$9];
       var $11=(($10)|0) >= 1;
       if ($11) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
@@ -35202,7 +34914,7 @@ function _Sfx86OpcodeDec_bound($opcode, $ctx, $buf) {
     case 2: 
       var $9=$3;
       var $10=(($9+200)|0);
-      var $11=HEAP32[(($10)>>2)];
+      var $11=HEAP[$10];
       var $12=(($11)|0) >= 1;
       if ($12) { __label__ = 3; break; } else { __label__ = 4; break; }
     case 3: 
@@ -35231,7 +34943,7 @@ function _Sfx86OpcodeDec_bound($opcode, $ctx, $buf) {
       var $32=$rm;
       _sx86_dec_full_modregrm($29, 1, 0, $30, $31, $32, ((_op1_tmp)|0), ((_op2_tmp)|0));
       var $33=$4;
-      var $34=_sprintf($33, ((STRING_TABLE.__str15280)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=((_op2_tmp)|0),HEAP32[((tempInt+4)>>2)]=((_op1_tmp)|0),tempInt));
+      var $34=_sprintf($33, ((STRING_TABLE.__str15280)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=((_op2_tmp)|0),HEAP[tempInt+4]=((_op1_tmp)|0),tempInt));
       $1=1;
       __label__ = 5; break;
     case 4: 
@@ -35290,7 +35002,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $24=$3;
       var $25=(($24+4)|0);
       var $26=(($25+100)|0);
-      var $27=HEAP32[(($26)>>2)];
+      var $27=HEAP[$26];
       var $28=$rel;
       var $29=(($28+$27)|0);
       $rel=$29;
@@ -35308,7 +35020,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $39=(($38+4)|0);
       var $40=$39;
       var $41=(($40)|0);
-      var $42=HEAPU16[(($41)>>1)];
+      var $42=HEAP[$41];
       var $43=(($42)&65535);
       var $44=(($43)|0)==0;
       var $45=(($44)&1);
@@ -35324,7 +35036,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $52=(($51+4)|0);
       var $53=(($52+96)|0);
       var $54=$53;
-      var $55=HEAP32[(($54)>>2)];
+      var $55=HEAP[$54];
       var $56=$55 & 2048;
       $tf=$56;
       __label__ = 64; break;
@@ -35338,7 +35050,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $63=(($62+4)|0);
       var $64=(($63+96)|0);
       var $65=$64;
-      var $66=HEAP32[(($65)>>2)];
+      var $66=HEAP[$65];
       var $67=$66 & 2048;
       var $68=(($67)|0)!=0;
       var $69=$68 ^ 1;
@@ -35355,7 +35067,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $77=(($76+4)|0);
       var $78=(($77+96)|0);
       var $79=$78;
-      var $80=HEAP32[(($79)>>2)];
+      var $80=HEAP[$79];
       var $81=$80 & 1;
       $tf=$81;
       __label__ = 62; break;
@@ -35369,7 +35081,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $88=(($87+4)|0);
       var $89=(($88+96)|0);
       var $90=$89;
-      var $91=HEAP32[(($90)>>2)];
+      var $91=HEAP[$90];
       var $92=$91 & 1;
       var $93=(($92)|0)!=0;
       var $94=$93 ^ 1;
@@ -35386,7 +35098,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $102=(($101+4)|0);
       var $103=(($102+96)|0);
       var $104=$103;
-      var $105=HEAP32[(($104)>>2)];
+      var $105=HEAP[$104];
       var $106=$105 & 64;
       $tf=$106;
       __label__ = 60; break;
@@ -35400,7 +35112,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $113=(($112+4)|0);
       var $114=(($113+96)|0);
       var $115=$114;
-      var $116=HEAP32[(($115)>>2)];
+      var $116=HEAP[$115];
       var $117=$116 & 64;
       var $118=(($117)|0)!=0;
       var $119=$118 ^ 1;
@@ -35417,7 +35129,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $127=(($126+4)|0);
       var $128=(($127+96)|0);
       var $129=$128;
-      var $130=HEAP32[(($129)>>2)];
+      var $130=HEAP[$129];
       var $131=$130 & 64;
       var $132=(($131)|0)!=0;
       if ($132) { var $142 = 1;__label__ = 23; break; } else { __label__ = 22; break; }
@@ -35426,7 +35138,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $135=(($134+4)|0);
       var $136=(($135+96)|0);
       var $137=$136;
-      var $138=HEAP32[(($137)>>2)];
+      var $138=HEAP[$137];
       var $139=$138 & 1;
       var $140=(($139)|0)!=0;
       var $142 = $140;__label__ = 23; break;
@@ -35445,7 +35157,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $150=(($149+4)|0);
       var $151=(($150+96)|0);
       var $152=$151;
-      var $153=HEAP32[(($152)>>2)];
+      var $153=HEAP[$152];
       var $154=$153 & 64;
       var $155=(($154)|0)!=0;
       if ($155) { var $166 = 0;__label__ = 27; break; } else { __label__ = 26; break; }
@@ -35454,7 +35166,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $158=(($157+4)|0);
       var $159=(($158+96)|0);
       var $160=$159;
-      var $161=HEAP32[(($160)>>2)];
+      var $161=HEAP[$160];
       var $162=$161 & 1;
       var $163=(($162)|0)!=0;
       var $164=$163 ^ 1;
@@ -35474,7 +35186,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $174=(($173+4)|0);
       var $175=(($174+96)|0);
       var $176=$175;
-      var $177=HEAP32[(($176)>>2)];
+      var $177=HEAP[$176];
       var $178=$177 & 128;
       $tf=$178;
       __label__ = 56; break;
@@ -35488,7 +35200,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $185=(($184+4)|0);
       var $186=(($185+96)|0);
       var $187=$186;
-      var $188=HEAP32[(($187)>>2)];
+      var $188=HEAP[$187];
       var $189=$188 & 128;
       var $190=(($189)|0)!=0;
       var $191=$190 ^ 1;
@@ -35505,7 +35217,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $199=(($198+4)|0);
       var $200=(($199+96)|0);
       var $201=$200;
-      var $202=HEAP32[(($201)>>2)];
+      var $202=HEAP[$201];
       var $203=$202 & 4;
       $tf=$203;
       __label__ = 54; break;
@@ -35519,7 +35231,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $210=(($209+4)|0);
       var $211=(($210+96)|0);
       var $212=$211;
-      var $213=HEAP32[(($212)>>2)];
+      var $213=HEAP[$212];
       var $214=$213 & 4;
       var $215=(($214)|0)!=0;
       var $216=$215 ^ 1;
@@ -35536,13 +35248,13 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $224=(($223+4)|0);
       var $225=(($224+96)|0);
       var $226=$225;
-      var $227=HEAP32[(($226)>>2)];
+      var $227=HEAP[$226];
       var $228=$227 & 128;
       var $229=$3;
       var $230=(($229+4)|0);
       var $231=(($230+96)|0);
       var $232=$231;
-      var $233=HEAP32[(($232)>>2)];
+      var $233=HEAP[$232];
       var $234=$233 & 2048;
       var $235=(($228)|0)!=(($234)|0);
       var $236=(($235)&1);
@@ -35558,13 +35270,13 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $243=(($242+4)|0);
       var $244=(($243+96)|0);
       var $245=$244;
-      var $246=HEAP32[(($245)>>2)];
+      var $246=HEAP[$245];
       var $247=$246 & 128;
       var $248=$3;
       var $249=(($248+4)|0);
       var $250=(($249+96)|0);
       var $251=$250;
-      var $252=HEAP32[(($251)>>2)];
+      var $252=HEAP[$251];
       var $253=$252 & 2048;
       var $254=(($247)|0)==(($253)|0);
       var $255=(($254)&1);
@@ -35580,13 +35292,13 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $262=(($261+4)|0);
       var $263=(($262+96)|0);
       var $264=$263;
-      var $265=HEAP32[(($264)>>2)];
+      var $265=HEAP[$264];
       var $266=$265 & 128;
       var $267=$3;
       var $268=(($267+4)|0);
       var $269=(($268+96)|0);
       var $270=$269;
-      var $271=HEAP32[(($270)>>2)];
+      var $271=HEAP[$270];
       var $272=$271 & 2048;
       var $273=(($266)|0)!=(($272)|0);
       if ($273) { var $283 = 1;__label__ = 43; break; } else { __label__ = 42; break; }
@@ -35595,7 +35307,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $276=(($275+4)|0);
       var $277=(($276+96)|0);
       var $278=$277;
-      var $279=HEAP32[(($278)>>2)];
+      var $279=HEAP[$278];
       var $280=$279 & 64;
       var $281=(($280)|0)!=0;
       var $283 = $281;__label__ = 43; break;
@@ -35614,13 +35326,13 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $291=(($290+4)|0);
       var $292=(($291+96)|0);
       var $293=$292;
-      var $294=HEAP32[(($293)>>2)];
+      var $294=HEAP[$293];
       var $295=$294 & 128;
       var $296=$3;
       var $297=(($296+4)|0);
       var $298=(($297+96)|0);
       var $299=$298;
-      var $300=HEAP32[(($299)>>2)];
+      var $300=HEAP[$299];
       var $301=$300 & 2048;
       var $302=(($295)|0)==(($301)|0);
       if ($302) { __label__ = 46; break; } else { var $313 = 0;__label__ = 47; break; }
@@ -35629,7 +35341,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $305=(($304+4)|0);
       var $306=(($305+96)|0);
       var $307=$306;
-      var $308=HEAP32[(($307)>>2)];
+      var $308=HEAP[$307];
       var $309=$308 & 64;
       var $310=(($309)|0)!=0;
       var $311=$310 ^ 1;
@@ -35685,7 +35397,7 @@ function _Sfx86OpcodeExec_jc($opcode, $ctx) {
       var $339=(($338+32)|0);
       var $340=(($339+8)|0);
       var $341=(($340)|0);
-      var $342=HEAPU16[(($341)>>1)];
+      var $342=HEAP[$341];
       var $343=(($342)&65535);
       var $344=$rel;
       var $345=_softx86_set_instruction_ptr($336, $343, $344);
@@ -35747,7 +35459,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
       var $25=$3;
       var $26=(($25+4)|0);
       var $27=(($26+116)|0);
-      var $28=HEAP32[(($27)>>2)];
+      var $28=HEAP[$27];
       var $29=$rel;
       var $30=(($29+$28)|0);
       $rel=$30;
@@ -35761,7 +35473,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 7: 
       var $37=$4;
       var $38=$rel;
-      var $39=_sprintf($37, ((STRING_TABLE.__str495)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$38,tempInt));
+      var $39=_sprintf($37, ((STRING_TABLE.__str495)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$38,tempInt));
       __label__ = 57; break;
     case 8: 
       var $41=$2;
@@ -35771,7 +35483,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 9: 
       var $45=$4;
       var $46=$rel;
-      var $47=_sprintf($45, ((STRING_TABLE.__str1496)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$46,tempInt));
+      var $47=_sprintf($45, ((STRING_TABLE.__str1496)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$46,tempInt));
       __label__ = 56; break;
     case 10: 
       var $49=$2;
@@ -35781,7 +35493,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 11: 
       var $53=$4;
       var $54=$rel;
-      var $55=_sprintf($53, ((STRING_TABLE.__str2497)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$54,tempInt));
+      var $55=_sprintf($53, ((STRING_TABLE.__str2497)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$54,tempInt));
       __label__ = 55; break;
     case 12: 
       var $57=$2;
@@ -35791,7 +35503,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 13: 
       var $61=$4;
       var $62=$rel;
-      var $63=_sprintf($61, ((STRING_TABLE.__str3498)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$62,tempInt));
+      var $63=_sprintf($61, ((STRING_TABLE.__str3498)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$62,tempInt));
       __label__ = 54; break;
     case 14: 
       var $65=$2;
@@ -35801,7 +35513,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 15: 
       var $69=$4;
       var $70=$rel;
-      var $71=_sprintf($69, ((STRING_TABLE.__str4499)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$70,tempInt));
+      var $71=_sprintf($69, ((STRING_TABLE.__str4499)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$70,tempInt));
       __label__ = 53; break;
     case 16: 
       var $73=$2;
@@ -35811,7 +35523,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 17: 
       var $77=$4;
       var $78=$rel;
-      var $79=_sprintf($77, ((STRING_TABLE.__str5500)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$78,tempInt));
+      var $79=_sprintf($77, ((STRING_TABLE.__str5500)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$78,tempInt));
       __label__ = 52; break;
     case 18: 
       var $81=$2;
@@ -35821,7 +35533,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 19: 
       var $85=$4;
       var $86=$rel;
-      var $87=_sprintf($85, ((STRING_TABLE.__str6501)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$86,tempInt));
+      var $87=_sprintf($85, ((STRING_TABLE.__str6501)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$86,tempInt));
       __label__ = 51; break;
     case 20: 
       var $89=$2;
@@ -35831,7 +35543,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 21: 
       var $93=$4;
       var $94=$rel;
-      var $95=_sprintf($93, ((STRING_TABLE.__str7502)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$94,tempInt));
+      var $95=_sprintf($93, ((STRING_TABLE.__str7502)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$94,tempInt));
       __label__ = 50; break;
     case 22: 
       var $97=$2;
@@ -35841,7 +35553,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 23: 
       var $101=$4;
       var $102=$rel;
-      var $103=_sprintf($101, ((STRING_TABLE.__str8503)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$102,tempInt));
+      var $103=_sprintf($101, ((STRING_TABLE.__str8503)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$102,tempInt));
       __label__ = 49; break;
     case 24: 
       var $105=$2;
@@ -35851,7 +35563,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 25: 
       var $109=$4;
       var $110=$rel;
-      var $111=_sprintf($109, ((STRING_TABLE.__str9504)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$110,tempInt));
+      var $111=_sprintf($109, ((STRING_TABLE.__str9504)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$110,tempInt));
       __label__ = 48; break;
     case 26: 
       var $113=$2;
@@ -35861,7 +35573,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 27: 
       var $117=$4;
       var $118=$rel;
-      var $119=_sprintf($117, ((STRING_TABLE.__str10505)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$118,tempInt));
+      var $119=_sprintf($117, ((STRING_TABLE.__str10505)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$118,tempInt));
       __label__ = 47; break;
     case 28: 
       var $121=$2;
@@ -35871,7 +35583,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 29: 
       var $125=$4;
       var $126=$rel;
-      var $127=_sprintf($125, ((STRING_TABLE.__str11506)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$126,tempInt));
+      var $127=_sprintf($125, ((STRING_TABLE.__str11506)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$126,tempInt));
       __label__ = 46; break;
     case 30: 
       var $129=$2;
@@ -35881,7 +35593,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 31: 
       var $133=$4;
       var $134=$rel;
-      var $135=_sprintf($133, ((STRING_TABLE.__str12507)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$134,tempInt));
+      var $135=_sprintf($133, ((STRING_TABLE.__str12507)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$134,tempInt));
       __label__ = 45; break;
     case 32: 
       var $137=$2;
@@ -35891,7 +35603,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 33: 
       var $141=$4;
       var $142=$rel;
-      var $143=_sprintf($141, ((STRING_TABLE.__str13508)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$142,tempInt));
+      var $143=_sprintf($141, ((STRING_TABLE.__str13508)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$142,tempInt));
       __label__ = 44; break;
     case 34: 
       var $145=$2;
@@ -35901,7 +35613,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 35: 
       var $149=$4;
       var $150=$rel;
-      var $151=_sprintf($149, ((STRING_TABLE.__str14509)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$150,tempInt));
+      var $151=_sprintf($149, ((STRING_TABLE.__str14509)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$150,tempInt));
       __label__ = 43; break;
     case 36: 
       var $153=$2;
@@ -35911,7 +35623,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 37: 
       var $157=$4;
       var $158=$rel;
-      var $159=_sprintf($157, ((STRING_TABLE.__str15510)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$158,tempInt));
+      var $159=_sprintf($157, ((STRING_TABLE.__str15510)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$158,tempInt));
       __label__ = 42; break;
     case 38: 
       var $161=$2;
@@ -35921,7 +35633,7 @@ function _Sfx86OpcodeDec_jc($opcode, $ctx, $buf) {
     case 39: 
       var $165=$4;
       var $166=$rel;
-      var $167=_sprintf($165, ((STRING_TABLE.__str16511)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$166,tempInt));
+      var $167=_sprintf($165, ((STRING_TABLE.__str16511)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$166,tempInt));
       __label__ = 41; break;
     case 40: 
       $1=0;
@@ -36023,13 +35735,13 @@ function _Sfx86OpcodeExec_call($opcode, $ctx) {
       var $35=(($34+32)|0);
       var $36=(($35+8)|0);
       var $37=(($36)|0);
-      var $38=HEAP16[(($37)>>1)];
+      var $38=HEAP[$37];
       _softx86_stack_pushw($32, $38);
       var $39=$3;
       var $40=$3;
       var $41=(($40+4)|0);
       var $42=(($41+100)|0);
-      var $43=HEAP32[(($42)>>2)];
+      var $43=HEAP[$42];
       var $44=(($43) & 65535);
       _softx86_stack_pushw($39, $44);
       var $45=$3;
@@ -36070,7 +35782,7 @@ function _Sfx86OpcodeExec_call($opcode, $ctx) {
       var $72=$3;
       var $73=(($72+4)|0);
       var $74=(($73+100)|0);
-      var $75=HEAP32[(($74)>>2)];
+      var $75=HEAP[$74];
       var $76=$ofs1;
       var $77=(($76+$75)|0);
       $ofs1=$77;
@@ -36081,7 +35793,7 @@ function _Sfx86OpcodeExec_call($opcode, $ctx) {
       var $81=$3;
       var $82=(($81+4)|0);
       var $83=(($82+100)|0);
-      var $84=HEAP32[(($83)>>2)];
+      var $84=HEAP[$83];
       var $85=(($84) & 65535);
       _softx86_stack_pushw($80, $85);
       var $86=$3;
@@ -36157,7 +35869,7 @@ function _Sfx86OpcodeDec_call($opcode, $ctx, $buf) {
       var $35=(($34)&65535);
       var $36=$ofs;
       var $37=(($36)&65535);
-      var $38=_sprintf($33, ((STRING_TABLE.__str17512)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$35,HEAP32[((tempInt+4)>>2)]=$37,tempInt));
+      var $38=_sprintf($33, ((STRING_TABLE.__str17512)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$35,HEAP[tempInt+4]=$37,tempInt));
       $1=1;
       __label__ = 9; break;
     case 3: 
@@ -36190,7 +35902,7 @@ function _Sfx86OpcodeDec_call($opcode, $ctx, $buf) {
       var $60=$3;
       var $61=(($60+4)|0);
       var $62=(($61+116)|0);
-      var $63=HEAP32[(($62)>>2)];
+      var $63=HEAP[$62];
       var $64=$ofs1;
       var $65=(($64+$63)|0);
       $ofs1=$65;
@@ -36199,7 +35911,7 @@ function _Sfx86OpcodeDec_call($opcode, $ctx, $buf) {
       $ofs1=$67;
       var $68=$4;
       var $69=$ofs1;
-      var $70=_sprintf($68, ((STRING_TABLE.__str18513)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$69,tempInt));
+      var $70=_sprintf($68, ((STRING_TABLE.__str18513)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$69,tempInt));
       $1=1;
       __label__ = 9; break;
     case 7: 
@@ -36260,7 +35972,7 @@ function _Sfx86OpcodeExec_jmp($opcode, $ctx) {
       var $24=$3;
       var $25=(($24+4)|0);
       var $26=(($25+100)|0);
-      var $27=HEAP32[(($26)>>2)];
+      var $27=HEAP[$26];
       var $28=$ofs;
       var $29=(($28+$27)|0);
       $ofs=$29;
@@ -36337,7 +36049,7 @@ function _Sfx86OpcodeExec_jmp($opcode, $ctx) {
       var $85=$3;
       var $86=(($85+4)|0);
       var $87=(($86+100)|0);
-      var $88=HEAP32[(($87)>>2)];
+      var $88=HEAP[$87];
       var $89=$ofs2;
       var $90=(($89+$88)|0);
       $ofs2=$90;
@@ -36411,7 +36123,7 @@ function _Sfx86OpcodeDec_jmp($opcode, $ctx, $buf) {
       var $25=$3;
       var $26=(($25+4)|0);
       var $27=(($26+116)|0);
-      var $28=HEAP32[(($27)>>2)];
+      var $28=HEAP[$27];
       var $29=$ofs;
       var $30=(($29+$28)|0);
       $ofs=$30;
@@ -36420,7 +36132,7 @@ function _Sfx86OpcodeDec_jmp($opcode, $ctx, $buf) {
       $ofs=$32;
       var $33=$4;
       var $34=$ofs;
-      var $35=_sprintf($33, ((STRING_TABLE.__str19514)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$34,tempInt));
+      var $35=_sprintf($33, ((STRING_TABLE.__str19514)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$34,tempInt));
       $1=1;
       __label__ = 14; break;
     case 5: 
@@ -36462,7 +36174,7 @@ function _Sfx86OpcodeDec_jmp($opcode, $ctx, $buf) {
       var $67=(($66)&65535);
       var $68=$ofs1;
       var $69=(($68)&65535);
-      var $70=_sprintf($65, ((STRING_TABLE.__str20515)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$67,HEAP32[((tempInt+4)>>2)]=$69,tempInt));
+      var $70=_sprintf($65, ((STRING_TABLE.__str20515)|0), (tempInt=STACKTOP,STACKTOP += 8,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$67,HEAP[tempInt+4]=$69,tempInt));
       $1=1;
       __label__ = 14; break;
     case 7: 
@@ -36488,7 +36200,7 @@ function _Sfx86OpcodeDec_jmp($opcode, $ctx, $buf) {
       var $86=$3;
       var $87=(($86+4)|0);
       var $88=(($87+116)|0);
-      var $89=HEAP32[(($88)>>2)];
+      var $89=HEAP[$88];
       var $90=$ofs2;
       var $91=(($90+$89)|0);
       $ofs2=$91;
@@ -36497,7 +36209,7 @@ function _Sfx86OpcodeDec_jmp($opcode, $ctx, $buf) {
       $ofs2=$93;
       var $94=$4;
       var $95=$ofs2;
-      var $96=_sprintf($94, ((STRING_TABLE.__str19514)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$95,tempInt));
+      var $96=_sprintf($94, ((STRING_TABLE.__str19514)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$95,tempInt));
       $1=1;
       __label__ = 14; break;
     case 11: 
@@ -36559,7 +36271,7 @@ function _Sfx86OpcodeExec_loop($opcode, $ctx) {
       var $23=$3;
       var $24=(($23+4)|0);
       var $25=(($24+100)|0);
-      var $26=HEAP32[(($25)>>2)];
+      var $26=HEAP[$25];
       var $27=$rel;
       var $28=(($27+$26)|0);
       $rel=$28;
@@ -36572,9 +36284,9 @@ function _Sfx86OpcodeExec_loop($opcode, $ctx) {
       var $34=(($33+4)|0);
       var $35=$34;
       var $36=(($35)|0);
-      var $37=HEAP16[(($36)>>1)];
+      var $37=HEAP[$36];
       var $38=(($37-1)&65535);
-      HEAP16[(($36)>>1)]=$38;
+      HEAP[$36]=$38;
       var $39=$2;
       var $40=(($39)&255);
       var $41=(($40)|0)==226;
@@ -36586,7 +36298,7 @@ function _Sfx86OpcodeExec_loop($opcode, $ctx) {
       var $46=(($45+4)|0);
       var $47=$46;
       var $48=(($47)|0);
-      var $49=HEAPU16[(($48)>>1)];
+      var $49=HEAP[$48];
       var $50=(($49)&65535);
       var $51=(($50)|0)!=0;
       var $52=(($51)&1);
@@ -36602,7 +36314,7 @@ function _Sfx86OpcodeExec_loop($opcode, $ctx) {
       var $59=(($58+4)|0);
       var $60=(($59+96)|0);
       var $61=$60;
-      var $62=HEAP32[(($61)>>2)];
+      var $62=HEAP[$61];
       var $63=$62 & 64;
       var $64=(($63)|0)!=0;
       if ($64) { __label__ = 10; break; } else { var $76 = 0;__label__ = 11; break; }
@@ -36613,7 +36325,7 @@ function _Sfx86OpcodeExec_loop($opcode, $ctx) {
       var $69=(($68+4)|0);
       var $70=$69;
       var $71=(($70)|0);
-      var $72=HEAPU16[(($71)>>1)];
+      var $72=HEAP[$71];
       var $73=(($72)&65535);
       var $74=(($73)|0)!=0;
       var $76 = $74;__label__ = 11; break;
@@ -36632,7 +36344,7 @@ function _Sfx86OpcodeExec_loop($opcode, $ctx) {
       var $84=(($83+4)|0);
       var $85=(($84+96)|0);
       var $86=$85;
-      var $87=HEAP32[(($86)>>2)];
+      var $87=HEAP[$86];
       var $88=$87 & 64;
       var $89=(($88)|0)==0;
       if ($89) { __label__ = 14; break; } else { var $101 = 0;__label__ = 15; break; }
@@ -36643,7 +36355,7 @@ function _Sfx86OpcodeExec_loop($opcode, $ctx) {
       var $94=(($93+4)|0);
       var $95=$94;
       var $96=(($95)|0);
-      var $97=HEAPU16[(($96)>>1)];
+      var $97=HEAP[$96];
       var $98=(($97)&65535);
       var $99=(($98)|0)!=0;
       var $101 = $99;__label__ = 15; break;
@@ -36670,7 +36382,7 @@ function _Sfx86OpcodeExec_loop($opcode, $ctx) {
       var $113=(($112+32)|0);
       var $114=(($113+8)|0);
       var $115=(($114)|0);
-      var $116=HEAPU16[(($115)>>1)];
+      var $116=HEAP[$115];
       var $117=(($116)&65535);
       var $118=$rel;
       var $119=_softx86_set_instruction_ptr($110, $117, $118);
@@ -36718,7 +36430,7 @@ function _Sfx86OpcodeDec_loop($opcode, $ctx, $buf) {
       var $15=$3;
       var $16=(($15+4)|0);
       var $17=(($16+116)|0);
-      var $18=HEAP32[(($17)>>2)];
+      var $18=HEAP[$17];
       var $19=$rel;
       var $20=(($19+$18)|0);
       $rel=$20;
@@ -36732,7 +36444,7 @@ function _Sfx86OpcodeDec_loop($opcode, $ctx, $buf) {
     case 4: 
       var $27=$4;
       var $28=$rel;
-      var $29=_sprintf($27, ((STRING_TABLE.__str21516)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$28,tempInt));
+      var $29=_sprintf($27, ((STRING_TABLE.__str21516)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$28,tempInt));
       __label__ = 12; break;
     case 5: 
       var $31=$2;
@@ -36742,7 +36454,7 @@ function _Sfx86OpcodeDec_loop($opcode, $ctx, $buf) {
     case 6: 
       var $35=$4;
       var $36=$rel;
-      var $37=_sprintf($35, ((STRING_TABLE.__str22517)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$36,tempInt));
+      var $37=_sprintf($35, ((STRING_TABLE.__str22517)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$36,tempInt));
       __label__ = 11; break;
     case 7: 
       var $39=$2;
@@ -36752,7 +36464,7 @@ function _Sfx86OpcodeDec_loop($opcode, $ctx, $buf) {
     case 8: 
       var $43=$4;
       var $44=$rel;
-      var $45=_sprintf($43, ((STRING_TABLE.__str23518)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP32[((tempInt)>>2)]=$44,tempInt));
+      var $45=_sprintf($43, ((STRING_TABLE.__str23518)|0), (tempInt=STACKTOP,STACKTOP += 4,assert(STACKTOP < STACK_ROOT + STACK_MAX, "Ran out of stack"),HEAP[tempInt]=$44,tempInt));
       __label__ = 10; break;
     case 9: 
       $1=0;
@@ -36774,7 +36486,7 @@ function _Sfx86OpcodeDec_loop($opcode, $ctx, $buf) {
 _Sfx86OpcodeDec_loop["X"]=1;
 
 function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
-  var __stackBase__  = STACKTOP; STACKTOP += 16; assert(STACKTOP % 4 == 0, "Stack is unaligned"); assert(STACKTOP < STACK_MAX, "Ran out of stack");
+  var __stackBase__  = STACKTOP; STACKTOP += 6; assert(STACKTOP < STACK_MAX, "Ran out of stack");
   var __label__;
   __label__ = 1; 
   while(1) switch(__label__) {
@@ -36794,9 +36506,9 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $di;
       var $addr;
       var $tmp8=__stackBase__;
-      var $tmp16=__stackBase__+4;
-      var $tmp8dst=__stackBase__+8;
-      var $tmp16dst=__stackBase__+12;
+      var $tmp16=__stackBase__+1;
+      var $tmp8dst=__stackBase__+3;
+      var $tmp16dst=__stackBase__+4;
       var $seg;
       $2=$opcode;
       $3=$ctx;
@@ -36937,7 +36649,7 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $77=(($76+24)|0);
       var $78=$77;
       var $79=(($78)|0);
-      var $80=HEAPU16[(($79)>>1)];
+      var $80=HEAP[$79];
       var $81=(($80)&65535);
       $si=$81;
       var $82=$3;
@@ -36946,12 +36658,12 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $85=(($84+28)|0);
       var $86=$85;
       var $87=(($86)|0);
-      var $88=HEAPU16[(($87)>>1)];
+      var $88=HEAP[$87];
       var $89=(($88)&65535);
       $di=$89;
       var $90=$3;
       var $91=(($90+240)|0);
-      var $92=HEAPU8[($91)];
+      var $92=HEAP[$91];
       var $93=(($92)&255);
       var $94=(($93)|0) > 0;
       if ($94) { __label__ = 32; break; } else { __label__ = 42; break; }
@@ -36962,7 +36674,7 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $99=(($98+4)|0);
       var $100=$99;
       var $101=(($100)|0);
-      var $102=HEAPU16[(($101)>>1)];
+      var $102=HEAP[$101];
       var $103=(($102)&65535);
       var $104=(($103)|0)==0;
       var $105=(($104)&1);
@@ -37025,7 +36737,7 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $138=(($137+4)|0);
       var $139=(($138+96)|0);
       var $140=$139;
-      var $141=HEAP32[(($140)>>2)];
+      var $141=HEAP[$140];
       var $142=$141 & 1024;
       $df=$142;
       var $143=$inc_esi;
@@ -37034,13 +36746,13 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
     case 48: 
       var $146=$3;
       var $147=(($146+236)|0);
-      var $148=HEAP8[($147)];
+      var $148=HEAP[$147];
       var $149=(($148 << 24) >> 24)!=0;
       if ($149) { __label__ = 49; break; } else { __label__ = 50; break; }
     case 49: 
       var $151=$3;
       var $152=(($151+238)|0);
-      var $153=HEAP16[(($152)>>1)];
+      var $153=HEAP[$152];
       $seg=$153;
       __label__ = 51; break;
     case 50: 
@@ -37049,7 +36761,7 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $157=(($156+32)|0);
       var $158=(($157+24)|0);
       var $159=(($158)|0);
-      var $160=HEAP16[(($159)>>1)];
+      var $160=HEAP[$159];
       $seg=$160;
       __label__ = 51; break;
     case 51: 
@@ -37063,7 +36775,7 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $168=(($167)|0)==2;
       if ($168) { __label__ = 52; break; } else { __label__ = 56; break; }
     case 52: 
-      HEAP16[(($tmp16)>>1)]=0;
+      HEAP[$tmp16]=0;
       var $170=$3;
       var $171=$addr;
       var $172=$tmp16;
@@ -37088,7 +36800,7 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $185=(($184)|0)==1;
       if ($185) { __label__ = 57; break; } else { __label__ = 61; break; }
     case 57: 
-      HEAP8[($tmp8)]=0;
+      HEAP[$tmp8]=0;
       var $187=$3;
       var $188=$addr;
       var $189=_softx86_fetch($187, 0, $188, $tmp8, 1);
@@ -37118,10 +36830,10 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $205=(($204)|0)==164;
       if ($205) { __label__ = 64; break; } else { __label__ = 65; break; }
     case 64: 
-      var $207=HEAP16[(($tmp16)>>1)];
-      HEAP16[(($tmp16dst)>>1)]=$207;
-      var $208=HEAP8[($tmp8)];
-      HEAP8[($tmp8dst)]=$208;
+      var $207=HEAP[$tmp16];
+      HEAP[$tmp16dst]=$207;
+      var $208=HEAP[$tmp8];
+      HEAP[$tmp8dst]=$208;
       __label__ = 77; break;
     case 65: 
       var $210=$2;
@@ -37129,14 +36841,14 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $212=(($211)|0)==172;
       if ($212) { __label__ = 66; break; } else { __label__ = 67; break; }
     case 66: 
-      var $214=HEAP8[($tmp8)];
+      var $214=HEAP[$tmp8];
       var $215=$3;
       var $216=(($215+4)|0);
       var $217=(($216)|0);
       var $218=(($217)|0);
       var $219=$218;
       var $220=(($219)|0);
-      HEAP8[($220)]=$214;
+      HEAP[$220]=$214;
       __label__ = 76; break;
     case 67: 
       var $222=$2;
@@ -37144,14 +36856,14 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $224=(($223)|0)==173;
       if ($224) { __label__ = 68; break; } else { __label__ = 69; break; }
     case 68: 
-      var $226=HEAP16[(($tmp16)>>1)];
+      var $226=HEAP[$tmp16];
       var $227=$3;
       var $228=(($227+4)|0);
       var $229=(($228)|0);
       var $230=(($229)|0);
       var $231=$230;
       var $232=(($231)|0);
-      HEAP16[(($232)>>1)]=$226;
+      HEAP[$232]=$226;
       __label__ = 75; break;
     case 69: 
       var $234=$2;
@@ -37165,8 +36877,8 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $241=(($240)|0);
       var $242=$241;
       var $243=(($242)|0);
-      var $244=HEAP8[($243)];
-      HEAP8[($tmp8dst)]=$244;
+      var $244=HEAP[$243];
+      HEAP[$tmp8dst]=$244;
       __label__ = 74; break;
     case 71: 
       var $246=$2;
@@ -37180,8 +36892,8 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $253=(($252)|0);
       var $254=$253;
       var $255=(($254)|0);
-      var $256=HEAP16[(($255)>>1)];
-      HEAP16[(($tmp16dst)>>1)]=$256;
+      var $256=HEAP[$255];
+      HEAP[$tmp16dst]=$256;
       __label__ = 73; break;
     case 73: 
       __label__ = 74; break;
@@ -37198,13 +36910,13 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
     case 78: 
       var $265=$3;
       var $266=(($265+236)|0);
-      var $267=HEAP8[($266)];
+      var $267=HEAP[$266];
       var $268=(($267 << 24) >> 24)!=0;
       if ($268) { __label__ = 79; break; } else { __label__ = 80; break; }
     case 79: 
       var $270=$3;
       var $271=(($270+238)|0);
-      var $272=HEAP16[(($271)>>1)];
+      var $272=HEAP[$271];
       $seg=$272;
       __label__ = 81; break;
     case 80: 
@@ -37213,7 +36925,7 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $276=(($275+32)|0);
       var $277=(($276)|0);
       var $278=(($277)|0);
-      var $279=HEAP16[(($278)>>1)];
+      var $279=HEAP[$278];
       $seg=$279;
       __label__ = 81; break;
     case 81: 
@@ -37231,7 +36943,7 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $290=(($289)|0)==2;
       if ($290) { __label__ = 83; break; } else { __label__ = 84; break; }
     case 83: 
-      HEAP16[(($tmp16dst)>>1)]=0;
+      HEAP[$tmp16dst]=0;
       var $292=$3;
       var $293=$addr;
       var $294=$tmp16dst;
@@ -37242,7 +36954,7 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $298=(($297)|0)==1;
       if ($298) { __label__ = 85; break; } else { __label__ = 86; break; }
     case 85: 
-      HEAP8[($tmp8dst)]=0;
+      HEAP[$tmp8dst]=0;
       var $300=$3;
       var $301=$addr;
       var $302=_softx86_fetch($300, 0, $301, $tmp8dst, 1);
@@ -37337,12 +37049,12 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       if ($361) { __label__ = 111; break; } else { __label__ = 117; break; }
     case 111: 
       var $363=$3;
-      var $364=HEAP8[($tmp8)];
-      var $365=HEAP8[($tmp8dst)];
+      var $364=HEAP[$tmp8];
+      var $365=HEAP[$tmp8dst];
       var $366=_op_sub8($363, $364, $365);
       var $367=$3;
       var $368=(($367+240)|0);
-      var $369=HEAPU8[($368)];
+      var $369=HEAP[$368];
       var $370=(($369)&255);
       var $371=(($370)|0)==1;
       if ($371) { __label__ = 112; break; } else { __label__ = 113; break; }
@@ -37351,14 +37063,14 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $374=(($373+4)|0);
       var $375=(($374+96)|0);
       var $376=$375;
-      var $377=HEAP32[(($376)>>2)];
+      var $377=HEAP[$376];
       var $378=$377 & 64;
       $zflag_terminal=$378;
       __label__ = 116; break;
     case 113: 
       var $380=$3;
       var $381=(($380+240)|0);
-      var $382=HEAPU8[($381)];
+      var $382=HEAP[$381];
       var $383=(($382)&255);
       var $384=(($383)|0)==2;
       if ($384) { __label__ = 114; break; } else { __label__ = 115; break; }
@@ -37367,7 +37079,7 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $387=(($386+4)|0);
       var $388=(($387+96)|0);
       var $389=$388;
-      var $390=HEAP32[(($389)>>2)];
+      var $390=HEAP[$389];
       var $391=$390 & 64;
       var $392=(($391)|0)!=0;
       var $393=$392 ^ 1;
@@ -37385,12 +37097,12 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       if ($400) { __label__ = 118; break; } else { __label__ = 124; break; }
     case 118: 
       var $402=$3;
-      var $403=HEAP16[(($tmp16)>>1)];
-      var $404=HEAP16[(($tmp16dst)>>1)];
+      var $403=HEAP[$tmp16];
+      var $404=HEAP[$tmp16dst];
       var $405=_op_sub16($402, $403, $404);
       var $406=$3;
       var $407=(($406+240)|0);
-      var $408=HEAPU8[($407)];
+      var $408=HEAP[$407];
       var $409=(($408)&255);
       var $410=(($409)|0)==1;
       if ($410) { __label__ = 119; break; } else { __label__ = 120; break; }
@@ -37399,14 +37111,14 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $413=(($412+4)|0);
       var $414=(($413+96)|0);
       var $415=$414;
-      var $416=HEAP32[(($415)>>2)];
+      var $416=HEAP[$415];
       var $417=$416 & 64;
       $zflag_terminal=$417;
       __label__ = 123; break;
     case 120: 
       var $419=$3;
       var $420=(($419+240)|0);
-      var $421=HEAPU8[($420)];
+      var $421=HEAP[$420];
       var $422=(($421)&255);
       var $423=(($422)|0)==2;
       if ($423) { __label__ = 121; break; } else { __label__ = 122; break; }
@@ -37415,7 +37127,7 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $426=(($425+4)|0);
       var $427=(($426+96)|0);
       var $428=$427;
-      var $429=HEAP32[(($428)>>2)];
+      var $429=HEAP[$428];
       var $430=$429 & 64;
       var $431=(($430)|0)!=0;
       var $432=$431 ^ 1;
@@ -37439,12 +37151,12 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $445=(($444)|0);
       var $446=$445;
       var $447=(($446)|0);
-      var $448=HEAP8[($447)];
-      var $449=HEAP8[($tmp8dst)];
+      var $448=HEAP[$447];
+      var $449=HEAP[$tmp8dst];
       var $450=_op_sub8($441, $448, $449);
       var $451=$3;
       var $452=(($451+240)|0);
-      var $453=HEAPU8[($452)];
+      var $453=HEAP[$452];
       var $454=(($453)&255);
       var $455=(($454)|0)==1;
       if ($455) { __label__ = 126; break; } else { __label__ = 127; break; }
@@ -37453,14 +37165,14 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $458=(($457+4)|0);
       var $459=(($458+96)|0);
       var $460=$459;
-      var $461=HEAP32[(($460)>>2)];
+      var $461=HEAP[$460];
       var $462=$461 & 64;
       $zflag_terminal=$462;
       __label__ = 130; break;
     case 127: 
       var $464=$3;
       var $465=(($464+240)|0);
-      var $466=HEAPU8[($465)];
+      var $466=HEAP[$465];
       var $467=(($466)&255);
       var $468=(($467)|0)==2;
       if ($468) { __label__ = 128; break; } else { __label__ = 129; break; }
@@ -37469,7 +37181,7 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $471=(($470+4)|0);
       var $472=(($471+96)|0);
       var $473=$472;
-      var $474=HEAP32[(($473)>>2)];
+      var $474=HEAP[$473];
       var $475=$474 & 64;
       var $476=(($475)|0)!=0;
       var $477=$476 ^ 1;
@@ -37493,12 +37205,12 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $490=(($489)|0);
       var $491=$490;
       var $492=(($491)|0);
-      var $493=HEAP16[(($492)>>1)];
-      var $494=HEAP16[(($tmp16dst)>>1)];
+      var $493=HEAP[$492];
+      var $494=HEAP[$tmp16dst];
       var $495=_op_sub16($486, $493, $494);
       var $496=$3;
       var $497=(($496+240)|0);
-      var $498=HEAPU8[($497)];
+      var $498=HEAP[$497];
       var $499=(($498)&255);
       var $500=(($499)|0)==1;
       if ($500) { __label__ = 133; break; } else { __label__ = 134; break; }
@@ -37507,14 +37219,14 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $503=(($502+4)|0);
       var $504=(($503+96)|0);
       var $505=$504;
-      var $506=HEAP32[(($505)>>2)];
+      var $506=HEAP[$505];
       var $507=$506 & 64;
       $zflag_terminal=$507;
       __label__ = 137; break;
     case 134: 
       var $509=$3;
       var $510=(($509+240)|0);
-      var $511=HEAPU8[($510)];
+      var $511=HEAP[$510];
       var $512=(($511)&255);
       var $513=(($512)|0)==2;
       if ($513) { __label__ = 135; break; } else { __label__ = 136; break; }
@@ -37523,7 +37235,7 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $516=(($515+4)|0);
       var $517=(($516+96)|0);
       var $518=$517;
-      var $519=HEAP32[(($518)>>2)];
+      var $519=HEAP[$518];
       var $520=$519 & 64;
       var $521=(($520)|0)!=0;
       var $522=$521 ^ 1;
@@ -37549,7 +37261,7 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $535=(($534+24)|0);
       var $536=$535;
       var $537=(($536)|0);
-      HEAP16[(($537)>>1)]=$531;
+      HEAP[$537]=$531;
       var $538=$di;
       var $539=(($538) & 65535);
       var $540=$3;
@@ -37558,10 +37270,10 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $543=(($542+28)|0);
       var $544=$543;
       var $545=(($544)|0);
-      HEAP16[(($545)>>1)]=$539;
+      HEAP[$545]=$539;
       var $546=$3;
       var $547=(($546+240)|0);
-      var $548=HEAPU8[($547)];
+      var $548=HEAP[$547];
       var $549=(($548)&255);
       var $550=(($549)|0) > 0;
       if ($550) { __label__ = 142; break; } else { __label__ = 143; break; }
@@ -37572,14 +37284,14 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $555=(($554+4)|0);
       var $556=$555;
       var $557=(($556)|0);
-      var $558=HEAP16[(($557)>>1)];
+      var $558=HEAP[$557];
       var $559=(($558-1)&65535);
-      HEAP16[(($557)>>1)]=$559;
+      HEAP[$557]=$559;
       __label__ = 143; break;
     case 143: 
       var $561=$3;
       var $562=(($561+240)|0);
-      var $563=HEAPU8[($562)];
+      var $563=HEAP[$562];
       var $564=(($563)&255);
       var $565=(($564)|0) > 0;
       if ($565) { __label__ = 144; break; } else { __label__ = 149; break; }
@@ -37590,7 +37302,7 @@ function _Sfx86OpcodeExec_shovel($opcode, $ctx) {
       var $570=(($569+4)|0);
       var $571=$570;
       var $572=(($571)|0);
-      var $573=HEAPU16[(($572)>>1)];
+      var $573=HEAP[$572];
       var $574=(($573)&65535);
       var $575=(($574)|0)==0;
       var $576=(($575)&1);
@@ -37758,12 +37470,12 @@ function _Sfx86OpcodeExec_fpuhandoff($opcode, $ctx) {
   var $3=$2;
   var $4=(($3+128)|0);
   var $5=(($4+44)|0);
-  var $6=HEAP32[(($5)>>2)];
+  var $6=HEAP[$5];
   var $7=$2;
   var $8=$7;
   var $9=$2;
   var $10=(($9+244)|0);
-  var $11=HEAP32[(($10)>>2)];
+  var $11=HEAP[$10];
   var $12=$1;
   var $13=FUNCTION_TABLE[$6]($8, $11, $12);
   ;
@@ -37784,12 +37496,12 @@ function _Sfx86OpcodeDec_fpuhandoff($opcode, $ctx, $buf) {
   var $4=$2;
   var $5=(($4+128)|0);
   var $6=(($5+48)|0);
-  var $7=HEAP32[(($6)>>2)];
+  var $7=HEAP[$6];
   var $8=$2;
   var $9=$8;
   var $10=$2;
   var $11=(($10+244)|0);
-  var $12=HEAP32[(($11)>>2)];
+  var $12=HEAP[$11];
   var $13=$1;
   var $14=$3;
   var $15=FUNCTION_TABLE[$7]($9, $12, $13, $14);
@@ -37801,9 +37513,9 @@ function _Sfx86OpcodeDec_fpuhandoff($opcode, $ctx, $buf) {
   function _strcpy(pdest, psrc) {
       var i = 0;
       do {
-        HEAP8[(pdest+i)]=HEAP8[(psrc+i)];
+        HEAP[pdest+i]=HEAP[psrc+i];
         i ++;
-      } while (HEAP8[(psrc+i-1)] != 0);
+      } while (HEAP[psrc+i-1] != 0);
       return pdest;
     }
 
@@ -37817,13 +37529,12 @@ function _Sfx86OpcodeDec_fpuhandoff($opcode, $ctx, $buf) {
         //       int x = 4; printf("%c\n", (char)x);
         var ret;
         if (type === 'double') {
-          ret = (tempDoubleI32[0]=HEAP32[((varargs+argIndex)>>2)],tempDoubleI32[1]=HEAP32[((varargs+argIndex+4)>>2)],tempDoubleF64[0]);
+          ret = HEAP[varargs+argIndex];
         } else if (type == 'i64') {
-          ret = [HEAP32[((varargs+argIndex)>>2)],
-                 HEAP32[((varargs+argIndex+4)>>2)]];
+          ret = HEAP[varargs+argIndex];
         } else {
           type = 'i32'; // varargs are always i32, i64, or double
-          ret = HEAP32[((varargs+argIndex)>>2)];
+          ret = HEAP[varargs+argIndex];
         }
         argIndex += Runtime.getNativeFieldSize(type);
         return ret;
@@ -37833,9 +37544,9 @@ function _Sfx86OpcodeDec_fpuhandoff($opcode, $ctx, $buf) {
       var curr, next, currArg;
       while(1) {
         var startTextIndex = textIndex;
-        curr = HEAP8[(textIndex)];
+        curr = HEAP[textIndex];
         if (curr === 0) break;
-        next = HEAP8[(textIndex+1)];
+        next = HEAP[textIndex+1];
         if (curr == '%'.charCodeAt(0)) {
           // Handle flags.
           var flagAlwaysSigned = false;
@@ -37864,7 +37575,7 @@ function _Sfx86OpcodeDec_fpuhandoff($opcode, $ctx, $buf) {
                 break flagsLoop;
             }
             textIndex++;
-            next = HEAP8[(textIndex+1)];
+            next = HEAP[textIndex+1];
           }
   
           // Handle width.
@@ -37872,12 +37583,12 @@ function _Sfx86OpcodeDec_fpuhandoff($opcode, $ctx, $buf) {
           if (next == '*'.charCodeAt(0)) {
             width = getNextArg('i32');
             textIndex++;
-            next = HEAP8[(textIndex+1)];
+            next = HEAP[textIndex+1];
           } else {
             while (next >= '0'.charCodeAt(0) && next <= '9'.charCodeAt(0)) {
               width = width * 10 + (next - '0'.charCodeAt(0));
               textIndex++;
-              next = HEAP8[(textIndex+1)];
+              next = HEAP[textIndex+1];
             }
           }
   
@@ -37887,20 +37598,20 @@ function _Sfx86OpcodeDec_fpuhandoff($opcode, $ctx, $buf) {
             var precision = 0;
             precisionSet = true;
             textIndex++;
-            next = HEAP8[(textIndex+1)];
+            next = HEAP[textIndex+1];
             if (next == '*'.charCodeAt(0)) {
               precision = getNextArg('i32');
               textIndex++;
             } else {
               while(1) {
-                var precisionChr = HEAP8[(textIndex+1)];
+                var precisionChr = HEAP[textIndex+1];
                 if (precisionChr < '0'.charCodeAt(0) ||
                     precisionChr > '9'.charCodeAt(0)) break;
                 precision = precision * 10 + (precisionChr - '0'.charCodeAt(0));
                 textIndex++;
               }
             }
-            next = HEAP8[(textIndex+1)];
+            next = HEAP[textIndex+1];
           } else {
             var precision = 6; // Standard default.
           }
@@ -37909,7 +37620,7 @@ function _Sfx86OpcodeDec_fpuhandoff($opcode, $ctx, $buf) {
           var argSize;
           switch (String.fromCharCode(next)) {
             case 'h':
-              var nextNext = HEAP8[(textIndex+2)];
+              var nextNext = HEAP[textIndex+2];
               if (nextNext == 'h'.charCodeAt(0)) {
                 textIndex++;
                 argSize = 1; // char (actually i32 in varargs)
@@ -37918,7 +37629,7 @@ function _Sfx86OpcodeDec_fpuhandoff($opcode, $ctx, $buf) {
               }
               break;
             case 'l':
-              var nextNext = HEAP8[(textIndex+2)];
+              var nextNext = HEAP[textIndex+2];
               if (nextNext == 'l'.charCodeAt(0)) {
                 textIndex++;
                 argSize = 8; // long long
@@ -37940,7 +37651,7 @@ function _Sfx86OpcodeDec_fpuhandoff($opcode, $ctx, $buf) {
               argSize = null;
           }
           if (argSize) textIndex++;
-          next = HEAP8[(textIndex+1)];
+          next = HEAP[textIndex+1];
   
           // Handle type specifier.
           if (['d', 'i', 'u', 'o', 'x', 'X', 'p'].indexOf(String.fromCharCode(next)) != -1) {
@@ -37948,10 +37659,6 @@ function _Sfx86OpcodeDec_fpuhandoff($opcode, $ctx, $buf) {
             var signed = next == 'd'.charCodeAt(0) || next == 'i'.charCodeAt(0);
             argSize = argSize || 4;
             var currArg = getNextArg('i' + (argSize * 8));
-            // Flatten i64-1 [low, high] into a (slightly rounded) double
-            if (argSize == 8) {
-              currArg = Runtime.makeBigInt(currArg[0], currArg[1], next == 'u'.charCodeAt(0));
-            }
             // Truncate to requested size.
             if (argSize <= 4) {
               var limit = Math.pow(256, argSize) - 1;
@@ -38146,14 +37853,14 @@ function _Sfx86OpcodeDec_fpuhandoff($opcode, $ctx, $buf) {
           } else if (next == 'n'.charCodeAt(0)) {
             // Write the length written so far to the next parameter.
             var ptr = getNextArg('i32*');
-            HEAP32[((ptr)>>2)]=ret.length
+            HEAP[ptr]=ret.length
           } else if (next == '%'.charCodeAt(0)) {
             // Literal percent sign.
             ret.push(curr);
           } else {
             // Unknown specifiers remain untouched.
             for (var i = startTextIndex; i < textIndex + 2; i++) {
-              ret.push(HEAP8[(i)]);
+              ret.push(HEAP[i]);
             }
           }
           textIndex += 2;
@@ -38172,9 +37879,9 @@ function _Sfx86OpcodeDec_fpuhandoff($opcode, $ctx, $buf) {
       var limit = (n === undefined) ? result.length
                                     : Math.min(result.length, n - 1);
       for (var i = 0; i < limit; i++) {
-        HEAP8[(s+i)]=result[i];
+        HEAP[s+i]=result[i];
       }
-      HEAP8[(s+i)]=0;
+      HEAP[s+i]=0;
       return result.length;
     }function _sprintf(s, format, varargs) {
       // int sprintf(char *restrict s, const char *restrict format, ...);
@@ -38188,67 +37895,15 @@ function _Sfx86OpcodeDec_fpuhandoff($opcode, $ctx, $buf) {
 
   
   function _memset(ptr, value, num, align) {
-      // TODO: make these settings, and in memcpy, {{'s
-      if (num >= 20) {
-        // This is unaligned, but quite large, so work hard to get to aligned settings
-        var stop = ptr + num;
-        while (ptr % 4) { // no need to check for stop, since we have large num
-          HEAP8[ptr++] = value;
-        }
-        if (value < 0) value += 256; // make it unsigned
-        var ptr4 = ptr >> 2, stop4 = stop >> 2, value4 = value | (value << 8) | (value << 16) | (value << 24);
-        while (ptr4 < stop4) {
-          HEAP32[ptr4++] = value4;
-        }
-        ptr = ptr4 << 2;
-        while (ptr < stop) {
-          HEAP8[ptr++] = value;
-        }
-      } else {
-        while (num--) {
-          HEAP8[ptr++] = value;
-        }
-      }
+      for (var $$dest = ptr, $$stop = $$dest + num; $$dest < $$stop; $$dest++) {
+  HEAP[$$dest]=value
+  };
     }var _llvm_memset_p0i8_i32=_memset;
 
   function _memcpy(dest, src, num, align) {
       assert(num % 1 === 0, 'memcpy given ' + num + ' bytes to copy. Problem with quantum=1 corrections perhaps?');
-      if (num >= 20 && src % 2 == dest % 2) {
-        // This is unaligned, but quite large, and potentially alignable, so work hard to get to aligned settings
-        if (src % 4 == dest % 4) {
-          var stop = src + num;
-          while (src % 4) { // no need to check for stop, since we have large num
-            HEAP8[dest++] = HEAP8[src++];
-          }
-          var src4 = src >> 2, dest4 = dest >> 2, stop4 = stop >> 2;
-          while (src4 < stop4) {
-            HEAP32[dest4++] = HEAP32[src4++];
-          }
-          src = src4 << 2;
-          dest = dest4 << 2;
-          while (src < stop) {
-            HEAP8[dest++] = HEAP8[src++];
-          }
-        } else {
-          var stop = src + num;
-          if (src % 2) { // no need to check for stop, since we have large num
-            HEAP8[dest++] = HEAP8[src++];
-          }
-          var src2 = src >> 1, dest2 = dest >> 1, stop2 = stop >> 1;
-          while (src2 < stop2) {
-            HEAP16[dest2++] = HEAP16[src2++];
-          }
-          src = src2 << 1;
-          dest = dest2 << 1;
-          if (src < stop) {
-            HEAP8[dest++] = HEAP8[src++];
-          }
-        }
-      } else {
-        while (num--) {
-          HEAP8[dest++] = HEAP8[src++];
-        }
-      }
+      for (var $$src = src, $$dest = dest, $$stop = $$src + num; $$src < $$stop; $$src++, $$dest++) {
+  HEAP[$$dest]=HEAP[$$src] };
     }
 
 
@@ -38746,46 +38401,46 @@ STRING_TABLE.__str6541=allocate([76,79,68,83,66,32,0] /* LODSB \00 */, "i8", ALL
 STRING_TABLE.__str7542=allocate([76,79,68,83,87,32,0] /* LODSW \00 */, "i8", ALLOC_STATIC);
 STRING_TABLE.__str8543=allocate([83,67,65,83,66,32,0] /* SCASB \00 */, "i8", ALLOC_STATIC);
 STRING_TABLE.__str9544=allocate([83,67,65,83,87,32,0] /* SCASW \00 */, "i8", ALLOC_STATIC);
-HEAP32[((_sx86_regs8)>>2)]=((STRING_TABLE.__str29)|0);
-HEAP32[((_sx86_regs8+4)>>2)]=((STRING_TABLE.__str130)|0);
-HEAP32[((_sx86_regs8+8)>>2)]=((STRING_TABLE.__str231)|0);
-HEAP32[((_sx86_regs8+12)>>2)]=((STRING_TABLE.__str332)|0);
-HEAP32[((_sx86_regs8+16)>>2)]=((STRING_TABLE.__str433)|0);
-HEAP32[((_sx86_regs8+20)>>2)]=((STRING_TABLE.__str534)|0);
-HEAP32[((_sx86_regs8+24)>>2)]=((STRING_TABLE.__str635)|0);
-HEAP32[((_sx86_regs8+28)>>2)]=((STRING_TABLE.__str736)|0);
-HEAP32[((_sx86_regs16)>>2)]=((STRING_TABLE.__str837)|0);
-HEAP32[((_sx86_regs16+4)>>2)]=((STRING_TABLE.__str938)|0);
-HEAP32[((_sx86_regs16+8)>>2)]=((STRING_TABLE.__str1039)|0);
-HEAP32[((_sx86_regs16+12)>>2)]=((STRING_TABLE.__str1140)|0);
-HEAP32[((_sx86_regs16+16)>>2)]=((STRING_TABLE.__str1241)|0);
-HEAP32[((_sx86_regs16+20)>>2)]=((STRING_TABLE.__str1342)|0);
-HEAP32[((_sx86_regs16+24)>>2)]=((STRING_TABLE.__str1443)|0);
-HEAP32[((_sx86_regs16+28)>>2)]=((STRING_TABLE.__str15)|0);
-HEAP32[((_sx86_regs32)>>2)]=((STRING_TABLE.__str16)|0);
-HEAP32[((_sx86_regs32+4)>>2)]=((STRING_TABLE.__str1744)|0);
-HEAP32[((_sx86_regs32+8)>>2)]=((STRING_TABLE.__str18)|0);
-HEAP32[((_sx86_regs32+12)>>2)]=((STRING_TABLE.__str1945)|0);
-HEAP32[((_sx86_regs32+16)>>2)]=((STRING_TABLE.__str2046)|0);
-HEAP32[((_sx86_regs32+20)>>2)]=((STRING_TABLE.__str21)|0);
-HEAP32[((_sx86_regs32+24)>>2)]=((STRING_TABLE.__str22)|0);
-HEAP32[((_sx86_regs32+28)>>2)]=((STRING_TABLE.__str23)|0);
-HEAP32[((_sx86_regsaddr16_16)>>2)]=((STRING_TABLE.__str24)|0);
-HEAP32[((_sx86_regsaddr16_16+4)>>2)]=((STRING_TABLE.__str25)|0);
-HEAP32[((_sx86_regsaddr16_16+8)>>2)]=((STRING_TABLE.__str26)|0);
-HEAP32[((_sx86_regsaddr16_16+12)>>2)]=((STRING_TABLE.__str2747)|0);
-HEAP32[((_sx86_regsaddr16_16+16)>>2)]=((STRING_TABLE.__str1443)|0);
-HEAP32[((_sx86_regsaddr16_16+20)>>2)]=((STRING_TABLE.__str15)|0);
-HEAP32[((_sx86_regsaddr16_16+24)>>2)]=((STRING_TABLE.__str1342)|0);
-HEAP32[((_sx86_regsaddr16_16+28)>>2)]=((STRING_TABLE.__str1140)|0);
-HEAP32[((_sx86_segregs)>>2)]=((STRING_TABLE.__str28)|0);
-HEAP32[((_sx86_segregs+4)>>2)]=((STRING_TABLE.__str2948)|0);
-HEAP32[((_sx86_segregs+8)>>2)]=((STRING_TABLE.__str30)|0);
-HEAP32[((_sx86_segregs+12)>>2)]=((STRING_TABLE.__str31)|0);
-HEAP32[((_sx86_segregs+16)>>2)]=((STRING_TABLE.__str32)|0);
-HEAP32[((_sx86_segregs+20)>>2)]=((STRING_TABLE.__str33)|0);
-HEAP32[((_sx86_segregs+24)>>2)]=((STRING_TABLE.__str34)|0);
-HEAP32[((_sx86_segregs+28)>>2)]=((STRING_TABLE.__str35)|0);
+HEAP[_sx86_regs8]=((STRING_TABLE.__str29)|0);
+HEAP[_sx86_regs8+4]=((STRING_TABLE.__str130)|0);
+HEAP[_sx86_regs8+8]=((STRING_TABLE.__str231)|0);
+HEAP[_sx86_regs8+12]=((STRING_TABLE.__str332)|0);
+HEAP[_sx86_regs8+16]=((STRING_TABLE.__str433)|0);
+HEAP[_sx86_regs8+20]=((STRING_TABLE.__str534)|0);
+HEAP[_sx86_regs8+24]=((STRING_TABLE.__str635)|0);
+HEAP[_sx86_regs8+28]=((STRING_TABLE.__str736)|0);
+HEAP[_sx86_regs16]=((STRING_TABLE.__str837)|0);
+HEAP[_sx86_regs16+4]=((STRING_TABLE.__str938)|0);
+HEAP[_sx86_regs16+8]=((STRING_TABLE.__str1039)|0);
+HEAP[_sx86_regs16+12]=((STRING_TABLE.__str1140)|0);
+HEAP[_sx86_regs16+16]=((STRING_TABLE.__str1241)|0);
+HEAP[_sx86_regs16+20]=((STRING_TABLE.__str1342)|0);
+HEAP[_sx86_regs16+24]=((STRING_TABLE.__str1443)|0);
+HEAP[_sx86_regs16+28]=((STRING_TABLE.__str15)|0);
+HEAP[_sx86_regs32]=((STRING_TABLE.__str16)|0);
+HEAP[_sx86_regs32+4]=((STRING_TABLE.__str1744)|0);
+HEAP[_sx86_regs32+8]=((STRING_TABLE.__str18)|0);
+HEAP[_sx86_regs32+12]=((STRING_TABLE.__str1945)|0);
+HEAP[_sx86_regs32+16]=((STRING_TABLE.__str2046)|0);
+HEAP[_sx86_regs32+20]=((STRING_TABLE.__str21)|0);
+HEAP[_sx86_regs32+24]=((STRING_TABLE.__str22)|0);
+HEAP[_sx86_regs32+28]=((STRING_TABLE.__str23)|0);
+HEAP[_sx86_regsaddr16_16]=((STRING_TABLE.__str24)|0);
+HEAP[_sx86_regsaddr16_16+4]=((STRING_TABLE.__str25)|0);
+HEAP[_sx86_regsaddr16_16+8]=((STRING_TABLE.__str26)|0);
+HEAP[_sx86_regsaddr16_16+12]=((STRING_TABLE.__str2747)|0);
+HEAP[_sx86_regsaddr16_16+16]=((STRING_TABLE.__str1443)|0);
+HEAP[_sx86_regsaddr16_16+20]=((STRING_TABLE.__str15)|0);
+HEAP[_sx86_regsaddr16_16+24]=((STRING_TABLE.__str1342)|0);
+HEAP[_sx86_regsaddr16_16+28]=((STRING_TABLE.__str1140)|0);
+HEAP[_sx86_segregs]=((STRING_TABLE.__str28)|0);
+HEAP[_sx86_segregs+4]=((STRING_TABLE.__str2948)|0);
+HEAP[_sx86_segregs+8]=((STRING_TABLE.__str30)|0);
+HEAP[_sx86_segregs+12]=((STRING_TABLE.__str31)|0);
+HEAP[_sx86_segregs+16]=((STRING_TABLE.__str32)|0);
+HEAP[_sx86_segregs+20]=((STRING_TABLE.__str33)|0);
+HEAP[_sx86_segregs+24]=((STRING_TABLE.__str34)|0);
+HEAP[_sx86_segregs+28]=((STRING_TABLE.__str35)|0);
 FUNCTION_TABLE = [0,0,_op_add8,0,_op_add16,0,_op_add32,0,_op_adc8,0,_op_adc16,0,_op_adc32,0,_op_sub8,0,_op_sub16,0,_op_sub32,0,_op_sbb8,0,_op_sbb16,0,_op_sbb32,0,_softx86_step_def_on_read_io,0,_softx86_step_def_on_read_memory,0,_softx86_step_def_on_write_io,0,_softx86_step_def_on_write_memory,0,_softx86_step_def_on_hw_int,0,_softx86_step_def_on_hw_int_ack,0,_softx86_step_def_on_sw_int,0,_softx86_step_def_on_idle_cycle,0,_softx86_step_def_on_nmi_int,0,_softx86_step_def_on_nmi_int_ack,0,_softx86_step_def_on_fpu_opcode_dec,0,_softx86_step_def_on_fpu_opcode_exec,0,_softx86_step_def_on_reset,0,_op_mov8,0,_op_mov16,0,_op_mov32,0,_op_les16,0,_op_les32,0,_op_lds16,0,_op_lds32,0,_op_or8,0,_op_or16,0,_op_or32,0,_op_and8,0,_op_and16,0,_op_and32,0,_op_xor8,0,_op_xor16,0,_op_xor32,0,_op_rol8,0,_op_rol16,0,_op_rol32,0,_op_ror8,0,_op_ror16,0,_op_ror32,0,_op_rcl8,0,_op_rcl16,0,_op_rcl32,0,_op_rcr8,0,_op_rcr16,0,_op_rcr32,0,_op_shl8,0,_op_shl16,0,_op_shl32,0,_op_shr8,0,_op_shr16,0,_op_shr32,0,_op_sar8,0,_op_sar16,0,_op_sar32,0,_op_rol_cl_8,0,_op_rol_cl_16,0,_op_rol_cl_32,0,_op_rol1_8,0,_op_rol1_16,0,_op_rol1_32,0,_op_ror_cl_8,0,_op_ror_cl_16,0,_op_ror_cl_32,0,_op_ror1_8,0,_op_ror1_16,0,_op_ror1_32,0,_op_rcl_cl_8,0,_op_rcl_cl_16,0,_op_rcl_cl_32,0,_op_rcl1_8,0,_op_rcl1_16,0,_op_rcl1_32,0,_op_rcr_cl_8,0,_op_rcr_cl_16,0,_op_rcr_cl_32,0,_op_rcr1_8,0,_op_rcr1_16,0,_op_rcr1_32,0,_op_shl_cl_8,0,_op_shl_cl_16,0,_op_shl_cl_32,0,_op_shl1_8,0,_op_shl1_16,0,_op_shl1_32,0,_op_shr_cl_8,0,_op_shr_cl_16,0,_op_shr_cl_32,0,_op_shr1_8,0,_op_shr1_16,0,_op_shr1_32,0,_op_sar_cl_8,0,_op_sar_cl_16,0,_op_sar_cl_32,0,_op_sar1_8,0,_op_sar1_16,0,_op_sar1_32,0,_op_fcall16,0,_op_fcall32,0,_op_fjmp16,0,_op_fjmp32,0,_op_ncall16,0,_op_ncall32,0,_op_njmp16,0,_op_njmp32,0,_op_pushmem16,0,_op_pushmem32,0,_op_inc8,0,_op_inc16,0,_op_inc32,0,_op_dec8,0,_op_dec16,0,_op_dec32,0,_op_popmem16,0,_op_popmem32,0,_op_mul8,0,_op_mul16,0,_op_mul32,0,_op_imul8,0,_op_imul16,0,_op_imul32,0,_op_div8,0,_op_div16,0,_op_div32,0,_op_idiv8,0,_op_idiv16,0,_op_idiv32,0,_op_test8,0,_op_test16,0,_op_test32,0,_op_not8,0,_op_not16,0,_op_not32,0,_op_neg8,0,_op_neg16,0,_op_neg32,0,_op_bound16,0,_op_bound32,0,_Sfx86OpcodeExec_add,0,_Sfx86OpcodeDec_add,0,_Sfx86OpcodeExec_push,0,_Sfx86OpcodeDec_push,0,_Sfx86OpcodeExec_pop,0,_Sfx86OpcodeDec_pop,0,_Sfx86OpcodeExec_or,0,_Sfx86OpcodeDec_or,0,_Sfx86OpcodeExec_adc,0,_Sfx86OpcodeDec_adc,0,_Sfx86OpcodeExec_sbb,0,_Sfx86OpcodeDec_sbb,0,_Sfx86OpcodeExec_and,0,_Sfx86OpcodeDec_and,0,_Sfx86OpcodeExec_segover,0,_Sfx86OpcodeDec_segover,0,_Sfx86OpcodeExec_aaaseries,0,_Sfx86OpcodeDec_aaaseries,0,_Sfx86OpcodeExec_sub,0,_Sfx86OpcodeDec_sub,0,_Sfx86OpcodeExec_xor,0,_Sfx86OpcodeDec_xor,0,_Sfx86OpcodeExec_cmp,0,_Sfx86OpcodeDec_cmp,0,_Sfx86OpcodeExec_inc,0,_Sfx86OpcodeDec_inc,0,_Sfx86OpcodeExec_pusha,0,_Sfx86OpcodeDec_pusha,0,_Sfx86OpcodeExec_popa,0,_Sfx86OpcodeDec_popa,0,_Sfx86OpcodeExec_bound,0,_Sfx86OpcodeDec_bound,0,_Sfx86OpcodeExec_default,0,_Sfx86OpcodeDec_default,0,_Sfx86OpcodeExec_jc,0,_Sfx86OpcodeDec_jc,0,_Sfx86OpcodeExec_group80,0,_Sfx86OpcodeDec_group80,0,_Sfx86OpcodeExec_test,0,_Sfx86OpcodeDec_test,0,_Sfx86OpcodeExec_xchg,0,_Sfx86OpcodeDec_xchg,0,_Sfx86OpcodeExec_mov,0,_Sfx86OpcodeDec_mov,0,_Sfx86OpcodeExec_lea,0,_Sfx86OpcodeDec_lea,0,_Sfx86OpcodeExec_group8F,0,_Sfx86OpcodeDec_group8F,0,_Sfx86OpcodeExec_nop,0,_Sfx86OpcodeDec_nop,0,_Sfx86OpcodeExec_cxex,0,_Sfx86OpcodeDec_cxex,0,_Sfx86OpcodeExec_call,0,_Sfx86OpcodeDec_call,0,_Sfx86OpcodeExec_duhhh,0,_Sfx86OpcodeDec_duhhh,0,_Sfx86OpcodeExec_ahf,0,_Sfx86OpcodeDec_ahf,0,_Sfx86OpcodeExec_shovel,0,_Sfx86OpcodeDec_shovel,0,_Sfx86OpcodeExec_groupC0,0,_Sfx86OpcodeDec_groupC0,0,_Sfx86OpcodeExec_returns,0,_Sfx86OpcodeDec_returns,0,_Sfx86OpcodeExec_les,0,_Sfx86OpcodeDec_les,0,_Sfx86OpcodeExec_groupC6,0,_Sfx86OpcodeDec_groupC6,0,_Sfx86OpcodeExec_enterleave,0,_Sfx86OpcodeDec_enterleave,0,_Sfx86OpcodeExec_int,0,_Sfx86OpcodeDec_int,0,_Sfx86OpcodeExec_groupD0,0,_Sfx86OpcodeDec_groupD0,0,_Sfx86OpcodeExec_xlat,0,_Sfx86OpcodeDec_xlat,0,_Sfx86OpcodeExec_fpuhandoff,0,_Sfx86OpcodeDec_fpuhandoff,0,_Sfx86OpcodeExec_loop,0,_Sfx86OpcodeDec_loop,0,_Sfx86OpcodeExec_io,0,_Sfx86OpcodeDec_io,0,_Sfx86OpcodeExec_jmp,0,_Sfx86OpcodeDec_jmp,0,_Sfx86OpcodeExec_lock,0,_Sfx86OpcodeDec_lock,0,_Sfx86OpcodeExec_repetition,0,_Sfx86OpcodeDec_repetition,0,_Sfx86OpcodeExec_clx,0,_Sfx86OpcodeDec_clx,0,_Sfx86OpcodeExec_groupF6,0,_Sfx86OpcodeDec_groupF6,0,_Sfx86OpcodeExec_groupFE,0,_Sfx86OpcodeDec_groupFE,0]; Module["FUNCTION_TABLE"] = FUNCTION_TABLE;
 
 

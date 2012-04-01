@@ -1,6 +1,6 @@
 require 'ffi'
 
-class Cpu
+module Softx86
   extend FFI::Library
 end
 

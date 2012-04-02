@@ -2,7 +2,14 @@ require 'ffi'
 
 module Softx87
   extend FFI::Library
-  ffi_lib "lib/libsoftx87.so"
+  
+  if FFI::Platform.unix?
+    ffi_lib "lib/libsoftx87.so"
+  elsif FFI::Platform.windows?
+    ffi_lib "lib/softx87.dll"
+  else
+    raise RuntimeError "Platform not supported. Only windows or unix platforms are supported."
+  end
 
   SOFTX86_VERSION_HI = 0
   SOFTX86_VERSION_LO = 0

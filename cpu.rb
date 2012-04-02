@@ -1,6 +1,4 @@
-puts $:
-
-require 'softx86.rb'
+require './softx86'
 
 class Cpu
   include Softx86

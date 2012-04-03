@@ -94,7 +94,7 @@ module Softx87
            :on_idle_cycle, callback([ :pointer ], :void),
            :on_reset, callback([ :pointer ], :void),
            :on_fpu_opcode_exec, callback([ :pointer, :pointer, :uchar ], :int),
-           :on_fpu_opcode_dec, callback([ :pointer, :pointer, :uchar, [:char, 128] ], :int)
+           :on_fpu_opcode_dec, callback([ :pointer, :pointer, :uchar, :pointer ], :int)
     )
     def on_read_memory=(cb)
       @on_read_memory = cb
@@ -315,8 +315,8 @@ module Softx87
     layout(
            :on_read_memory, callback([ :pointer, :uint, :pointer, :int ], :void),
            :on_write_memory, callback([ :pointer, :uint, :pointer, :int ], :void),
-           :on_softx86_fetch_exec_byte, callback([ :pointer ], sx86),
-           :on_softx86_fetch_dec_byte, callback([ :pointer ], sx86),
+           :on_softx86_fetch_exec_byte, callback([ :pointer ], :uchar),
+           :on_softx86_fetch_dec_byte, callback([ :pointer ], :uchar),
            :on_sx86_exec_full_modrmonly_memx, callback([ :pointer, :uchar, :uchar, :int, callback([ :pointer, :string, :int ], :void) ], :void),
            :on_sx86_dec_full_modrmonly, callback([ :pointer, :uchar, :uchar, :uchar, :uchar, :string ], :void)
     )
@@ -398,7 +398,7 @@ module Softx87
   attach_function :softx87_set_fpu_register_double, [ :pointer, :int, :double ], :void
   attach_function :softx87_finit_setup, [ :pointer ], :void
   attach_function :softx87_on_fpu_opcode_exec, [ :pointer, :pointer, :uchar ], :int
-  attach_function :softx87_on_fpu_opcode_dec, [ :pointer, :pointer, :uchar, [:char, 128] ], :int
+  attach_function :softx87_on_fpu_opcode_dec, [ :pointer, :pointer, :uchar, :pointer ], :int
   SX87_FPUSTAT_INVALID_OP = 0x0001
   SX87_FPUSTAT_DENORMAL = 0x0002
   SX87_FPUSTAT_ZERO_DIVIDE = 0x0004

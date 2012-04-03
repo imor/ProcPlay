@@ -260,8 +260,8 @@ module Softx86
   attach_function :softx86_set_instruction_dec_ptr, [ :pointer, :uint, :uint ], :int
   attach_function :softx86_set_stack_ptr, [ :pointer, :uint, :uint ], :int
   attach_function :softx86_set_near_instruction_ptr, [ :pointer, :uint ], :int
-  attach_function :softx86_get_intvect, [ :pointer, :uchar, :pointer, :pointer ], :int
-  attach_function :softx86_go_int_frame, [ :pointer, :uchar ], :void
+  #attach_function :softx86_get_intvect, [ :pointer, :uchar, :pointer, :pointer ], :int
+  #attach_function :softx86_go_int_frame, [ :pointer, :uchar ], :void
   SX86_CPUFLAG_CARRY = 0x00000001
   SX86_CPUFLAG_RESERVED_01 = 0x00000002
   SX86_CPUFLAG_PARITY = 0x00000004
@@ -324,30 +324,30 @@ module Softx86
   SX86_CPUFLAGBO_RESERVED_29 = 29
   SX86_CPUFLAGBO_RESERVED_30 = 30
   SX86_CPUFLAGBO_RESERVED_31 = 31
-  attach_function :softx86_step_def_on_read_memory, [ :pointer, :uint, :pointer, :int ], :void
-  attach_function :softx86_step_def_on_read_io, [ :pointer, :uint, :pointer, :int ], :void
-  attach_function :softx86_step_def_on_write_memory, [ :pointer, :uint, :pointer, :int ], :void
-  attach_function :softx86_step_def_on_write_io, [ :pointer, :uint, :pointer, :int ], :void
-  attach_function :softx86_step_def_on_hw_int, [ :pointer, :uchar ], :void
-  attach_function :softx86_step_def_on_sw_int, [ :pointer, :uchar ], :void
-  attach_function :softx86_step_def_on_hw_int_ack, [ :pointer, :uchar ], :void
-  attach_function :softx86_step_def_on_idle_cycle, [ :pointer ], :void
-  attach_function :softx86_step_def_on_nmi_int, [ :pointer ], :void
-  attach_function :softx86_step_def_on_nmi_int_ack, [ :pointer ], :void
-  attach_function :softx86_step_def_on_fpu_opcode_exec, [ :pointer, :pointer, :uchar ], :int
-  attach_function :softx86_step_def_on_fpu_opcode_dec, [ :pointer, :pointer, :uchar, :pointer ], :int
-  attach_function :softx86_step_def_on_reset, [ :pointer ], :void
-  attach_function :softx86_ext_hw_signal, [ :pointer, :uchar ], :int
-  attach_function :softx86_ext_hw_ack, [ :pointer ], :int
-  attach_function :softx86_int_sw_signal, [ :pointer, :uchar ], :int
-  attach_function :softx86_ext_hw_nmi_signal, [ :pointer ], :int
-  attach_function :softx86_ext_hw_nmi_ack, [ :pointer ], :int
-  attach_function :softx86_parity8, [ :uchar ], :int
-  attach_function :softx86_parity16, [ :ushort ], :int
-  attach_function :softx86_parity32, [ :uint ], :int
-  attach_function :softx86_parity64, [ :ulong_long ], :int
+  # attach_function :softx86_step_def_on_read_memory, [ :pointer, :uint, :pointer, :int ], :void
+  # attach_function :softx86_step_def_on_read_io, [ :pointer, :uint, :pointer, :int ], :void
+  # attach_function :softx86_step_def_on_write_memory, [ :pointer, :uint, :pointer, :int ], :void
+  # attach_function :softx86_step_def_on_write_io, [ :pointer, :uint, :pointer, :int ], :void
+  # attach_function :softx86_step_def_on_hw_int, [ :pointer, :uchar ], :void
+  # attach_function :softx86_step_def_on_sw_int, [ :pointer, :uchar ], :void
+  # attach_function :softx86_step_def_on_hw_int_ack, [ :pointer, :uchar ], :void
+  # attach_function :softx86_step_def_on_idle_cycle, [ :pointer ], :void
+  # attach_function :softx86_step_def_on_nmi_int, [ :pointer ], :void
+  # attach_function :softx86_step_def_on_nmi_int_ack, [ :pointer ], :void
+  # attach_function :softx86_step_def_on_fpu_opcode_exec, [ :pointer, :pointer, :uchar ], :int
+  # attach_function :softx86_step_def_on_fpu_opcode_dec, [ :pointer, :pointer, :uchar, :pointer ], :int
+  # attach_function :softx86_step_def_on_reset, [ :pointer ], :void
+  # attach_function :softx86_ext_hw_signal, [ :pointer, :uchar ], :int
+  # attach_function :softx86_ext_hw_ack, [ :pointer ], :int
+  # attach_function :softx86_int_sw_signal, [ :pointer, :uchar ], :int
+  # attach_function :softx86_ext_hw_nmi_signal, [ :pointer ], :int
+  # attach_function :softx86_ext_hw_nmi_ack, [ :pointer ], :int
+  # attach_function :softx86_parity8, [ :uchar ], :int
+  # attach_function :softx86_parity16, [ :ushort ], :int
+  # attach_function :softx86_parity32, [ :uint ], :int
+  # attach_function :softx86_parity64, [ :ulong_long ], :int
   SX86_BUG_PREEMPTIBLE_AFTER_PREFIX = 0x12340500
   SX86_BUG_SP_DECREMENT_BEFORE_STORE = 0x12340600
   SX86_BUG_5BIT_SHIFTMASK = 0x12340700
-  attach_function :softx86_setbug, [ :pointer, :uint, :uchar ], :int
+  #attach_function :softx86_setbug, [ :pointer, :uint, :uchar ], :int
 end

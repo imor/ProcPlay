@@ -337,15 +337,15 @@ module Softx86
   # attach_function :softx86_step_def_on_fpu_opcode_exec, [ :pointer, :pointer, :uchar ], :int
   # attach_function :softx86_step_def_on_fpu_opcode_dec, [ :pointer, :pointer, :uchar, :pointer ], :int
   # attach_function :softx86_step_def_on_reset, [ :pointer ], :void
-  # attach_function :softx86_ext_hw_signal, [ :pointer, :uchar ], :int
-  # attach_function :softx86_ext_hw_ack, [ :pointer ], :int
-  # attach_function :softx86_int_sw_signal, [ :pointer, :uchar ], :int
-  # attach_function :softx86_ext_hw_nmi_signal, [ :pointer ], :int
-  # attach_function :softx86_ext_hw_nmi_ack, [ :pointer ], :int
-  # attach_function :softx86_parity8, [ :uchar ], :int
-  # attach_function :softx86_parity16, [ :ushort ], :int
-  # attach_function :softx86_parity32, [ :uint ], :int
-  # attach_function :softx86_parity64, [ :ulong_long ], :int
+  attach_function :softx86_ext_hw_signal, [ :pointer, :uchar ], :int
+  attach_function :softx86_ext_hw_ack, [ :pointer ], :int
+  attach_function :softx86_int_sw_signal, [ :pointer, :uchar ], :int
+  attach_function :softx86_ext_hw_nmi_signal, [ :pointer ], :int
+  attach_function :softx86_ext_hw_nmi_ack, [ :pointer ], :int
+  attach_function :softx86_parity8, [ :uchar ], :int
+  attach_function :softx86_parity16, [ :ushort ], :int
+  attach_function :softx86_parity32, [ :uint ], :int
+  attach_function :softx86_parity64, [ :ulong_long ], :int
   SX86_BUG_PREEMPTIBLE_AFTER_PREFIX = 0x12340500
   SX86_BUG_SP_DECREMENT_BEFORE_STORE = 0x12340600
   SX86_BUG_5BIT_SHIFTMASK = 0x12340700

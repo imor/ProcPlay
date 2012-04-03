@@ -1,4 +1,5 @@
 require './softx86'
+require './libc'
 
 class Cpu
   include Softx86
@@ -15,10 +16,22 @@ class Cpu
     if !softx86_init(@ctx, SX86_CPULEVEL_8086)
       raise RuntimeError "Failed to initialize underlying library."
     end
+
+    @ram = LibC::malloc RAM_SIZE
+
+    reset
+  end
+  
+  def reset()
+    softx86_reset(@ctx)
+    LibC::memset(@ram, 0, RAM_SIZE)
   end
 
 
+  
   private
+
+  RAM_SIZE = 1024 * 1024 # 1 MB
 
   def on_read_memory(ctx, address, buf, buf_size)
   end

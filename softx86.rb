@@ -94,7 +94,7 @@ module Softx86
            :on_idle_cycle, callback([ :pointer ], :void),
            :on_reset, callback([ :pointer ], :void),
            :on_fpu_opcode_exec, callback([ :pointer, :pointer, :uchar ], :int),
-           :on_fpu_opcode_dec, callback([ :pointer, :pointer, :uchar, [:char, 128] ], :int)
+           :on_fpu_opcode_dec, callback([ :pointer, :pointer, :uchar, :pointer ], :int)
     )
     def on_read_memory=(cb)
       @on_read_memory = cb
@@ -220,21 +220,21 @@ module Softx86
   SX86_CPULEVEL_8086 = 1
   SX86_CPULEVEL_80186 = 2
   SX86_CPULEVEL_80286 = 3
-  attach_function :sx86_exec_full_modregrm_rw, [ :pointer, :uchar, :uchar, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar, :uchar ], sx86), callback([ :pointer, :ushort, :ushort ], sx86), callback([ :pointer, :uint, :uint ], sx86) ], :void
-  attach_function :sx86_exec_full_modregrm_ro, [ :pointer, :uchar, :uchar, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar, :uchar ], sx86), callback([ :pointer, :ushort, :ushort ], sx86), callback([ :pointer, :uint, :uint ], sx86) ], :void
-  attach_function :sx86_exec_full_modsregrm_rw, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :ushort, :ushort ], sx86) ], :void
-  attach_function :sx86_exec_full_modrmonly_rw, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar ], sx86), callback([ :pointer, :ushort ], sx86), callback([ :pointer, :uint ], sx86) ], :void
-  attach_function :sx86_exec_full_modrmonly_rw_imm, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar, :uchar ], sx86), callback([ :pointer, :ushort, :ushort ], sx86), callback([ :pointer, :uint, :uint ], sx86) ], :void
-  attach_function :sx86_exec_full_modrmonly_rw_imm8, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar, :uchar ], sx86), callback([ :pointer, :ushort, :ushort ], sx86), callback([ :pointer, :uint, :uint ], sx86) ], :void
-  attach_function :sx86_exec_full_modrmonly_ro_imm, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar, :uchar ], sx86), callback([ :pointer, :ushort, :ushort ], sx86), callback([ :pointer, :uint, :uint ], sx86) ], :void
+  attach_function :sx86_exec_full_modregrm_rw, [ :pointer, :uchar, :uchar, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar, :uchar ], :uchar), callback([ :pointer, :ushort, :ushort ], :ushort), callback([ :pointer, :uint, :uint ], :uint) ], :void
+  attach_function :sx86_exec_full_modregrm_ro, [ :pointer, :uchar, :uchar, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar, :uchar ], :uchar), callback([ :pointer, :ushort, :ushort ], :ushort), callback([ :pointer, :uint, :uint ], :uint) ], :void
+  attach_function :sx86_exec_full_modsregrm_rw, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :ushort, :ushort ], :ushort) ], :void
+  attach_function :sx86_exec_full_modrmonly_rw, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar ], :uchar), callback([ :pointer, :ushort ], :ushort), callback([ :pointer, :uint ], :uint) ], :void
+  attach_function :sx86_exec_full_modrmonly_rw_imm, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar, :uchar ], :uchar), callback([ :pointer, :ushort, :ushort ], :ushort), callback([ :pointer, :uint, :uint ], :uint) ], :void
+  attach_function :sx86_exec_full_modrmonly_rw_imm8, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar, :uchar ], :uchar), callback([ :pointer, :ushort, :ushort ], :ushort), callback([ :pointer, :uint, :uint ], :uint) ], :void
+  attach_function :sx86_exec_full_modrmonly_ro_imm, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar, :uchar ], :uchar), callback([ :pointer, :ushort, :ushort ], :ushort), callback([ :pointer, :uint, :uint ], :uint) ], :void
   attach_function :sx86_exec_full_modregrm_xchg, [ :pointer, :uchar, :uchar, :uchar, :uchar, :uchar ], :void
   attach_function :sx86_exec_full_modregrm_lea, [ :pointer, :uchar, :uchar, :uchar, :uchar ], :void
   attach_function :sx86_exec_full_modrmonly_memx, [ :pointer, :uchar, :uchar, :int, callback([ :pointer, :string, :int ], :void) ], :void
   attach_function :sx86_exec_full_modrmonly_callfar, [ :pointer, :uchar, :uchar, :uchar, callback([ :pointer, :ushort, :ushort ], :void), callback([ :pointer, :uint, :uint ], :void) ], :void
-  attach_function :sx86_exec_full_modrmonly_ro, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar ], sx86), callback([ :pointer, :ushort ], sx86), callback([ :pointer, :uint ], sx86) ], :void
-  attach_function :sx86_exec_full_modrmonly_wo, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer ], sx86), callback([ :pointer ], sx86), callback([ :pointer ], sx86) ], :void
-  attach_function :sx86_exec_full_modregrm_far, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :ushort, :ushort ], sx86), callback([ :pointer, :uint, :uint ], sx86) ], :void
-  attach_function :sx86_exec_full_modregrm_far_ro3, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :short, :short, :short ], sx86), callback([ :pointer, :int, :int, :int ], sx86) ], :void
+  attach_function :sx86_exec_full_modrmonly_ro, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :uchar ], :uchar), callback([ :pointer, :ushort ], :ushort), callback([ :pointer, :uint ], :uint) ], :void
+  attach_function :sx86_exec_full_modrmonly_wo, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer ], :uchar), callback([ :pointer ], :ushort), callback([ :pointer ], :uint) ], :void
+  attach_function :sx86_exec_full_modregrm_far, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :ushort, :ushort ], :ushort), callback([ :pointer, :uint, :uint ], :uint) ], :void
+  attach_function :sx86_exec_full_modregrm_far_ro3, [ :pointer, :uchar, :uchar, :uchar, :uchar, callback([ :pointer, :short, :short, :short ], :short), callback([ :pointer, :int, :int, :int ], :int) ], :void
   attach_function :sx86_dec_full_modrmonly, [ :pointer, :uchar, :uchar, :uchar, :uchar, :string ], :void
   attach_function :sx86_dec_full_modregrm, [ :pointer, :uchar, :uchar, :uchar, :uchar, :uchar, :string, :string ], :void
   attach_function :sx86_dec_full_modsregrm, [ :pointer, :uchar, :uchar, :uchar, :string, :string ], :void
@@ -245,7 +245,7 @@ module Softx86
   attach_function :softx86_reset, [ :pointer ], :int
   attach_function :softx86_free, [ :pointer ], :int
   attach_function :softx86_step, [ :pointer ], :int
-  attach_function :softx86_decompile, [ :pointer, [:char, 256] ], :int
+  attach_function :softx86_decompile, [ :pointer, :pointer ], :int
   attach_function :softx86_decompile_exec_cs_ip, [ :pointer ], :int
   attach_function :softx86_stack_popw, [ :pointer ], :ushort
   attach_function :softx86_stack_discard_n, [ :pointer, :int ], :void
@@ -335,7 +335,7 @@ module Softx86
   attach_function :softx86_step_def_on_nmi_int, [ :pointer ], :void
   attach_function :softx86_step_def_on_nmi_int_ack, [ :pointer ], :void
   attach_function :softx86_step_def_on_fpu_opcode_exec, [ :pointer, :pointer, :uchar ], :int
-  attach_function :softx86_step_def_on_fpu_opcode_dec, [ :pointer, :pointer, :uchar, [:char, 128] ], :int
+  attach_function :softx86_step_def_on_fpu_opcode_dec, [ :pointer, :pointer, :uchar, :pointer ], :int
   attach_function :softx86_step_def_on_reset, [ :pointer ], :void
   attach_function :softx86_ext_hw_signal, [ :pointer, :uchar ], :int
   attach_function :softx86_ext_hw_ack, [ :pointer ], :int

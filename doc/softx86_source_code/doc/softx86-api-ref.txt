@@ -1,0 +1,275 @@
+Softx86 library function reference.
+
+QUICK REFERENCE:
+
+softx86_ctx		a structure representing one CPU, including status
+			and connection to outside world.
+
+============================================================================
+******************** INITIALIZATION AND DE-INITIALIZATION ******************
+----------------------------------------------------------------------------
+int softx86_init(softx86_ctx* ctx,int level);
+
+Initializes a context structure and allocates memory appropriately for
+use in emulating a CPU.
+
+softx86_ctx* ctx:		pointer context structure.
+
+int level:			numeric value indicating what version
+				of the 80x86 to emulate. This can be
+				any one of the following values:
+
+		SX86_CPULEVEL_8088			0
+		SX86_CPULEVEL_8086			1
+
+RETURN VALUE:
+
+0	Initialization of structure failed for one of many reasons:
+		- CPU version not supported by softx86.
+		- Unable to allocate memory.
+
+1	Initialization successful.
+
+2	Initialization successful, beware of incomplete or buggy emulation
+	of specified CPU version.
+
+----------------------------------------------------------------------------
+int softx86_free(softx86_ctx* ctx);
+
+Frees any resources used in the context structure that were allocated by
+softx86_init().
+
+softx86_ctx* ctx:		pointer to context structure
+
+RETURN VALUE:
+
+0	Freeing failed, structure was either freed already or is corrupt.
+
+1	Success.
+
+----------------------------------------------------------------------------
+
+
+============================================================================
+************************** GETTING IT TO THINK *****************************
+----------------------------------------------------------------------------
+int softx86_step(softx86_ctx* ctx);
+
+Causes the CPU to execute *ONE* instruction from address CS:IP. After
+executing one instruction control is returned to the caller.
+
+softx86_ctx* ctx:		pointer to context structure.
+
+RETURN VALUE:
+
+0	Execution failed, one of the possible reasons may be:
+		- Instruction opcodes were not recognized or deemed invalid.
+		- Portions of the context structure may be invalid.
+
+1	Execution succeeded, CS:IP points to next instruction.
+
+----------------------------------------------------------------------------
+int softx86_decompile(softx86_ctx* ctx,char asmbuf[256]);
+
+Causes the CPU to decompile *ONE* instruction from address pointed to by
+the alternate decompiler pair CS:IP (NOT the actual CS:IP).
+
+The alternate decompiler pair CS:IP is determined by
+ctx->state.reg_cs_decompiler and ctx->state.reg_ip_decompiler.
+
+softx86_ctx* ctx:		pointer to context structure.
+
+char asmbuf[256]:		pointer to 256-byte large buffer to hold
+				decompiled output.
+
+RETURN VALUE:
+
+0	Decompiling failed, one of the possible reasons may be:
+		- Instruction opcodes were not recognized or deemed invalid.
+		- Portions of the context structure may be invalid.
+
+1	Decompiling succeeded, decompiler CS:IP point to next instruction.
+
+-----------------------------------------------------------------------------
+
+==============================================================================
+************************** CHANGING REGISTER VALUES **************************
+------------------------------------------------------------------------------
+
+CPU registers AX,BX,CX,DX,SI,DI, and BP may be changed at any time by the
+calling application without causing conflicts. Registers SP,CS,DS,ES,SS, and IP
+should never be changed directly by the calling application, since Softx86
+will (someday) also emulate caches and instruction prefetch queues that rely
+on the values staying under it's direct control. For the latter registers,
+use the provided API calls instead.
+
+-------------------------------------------------------------------------------
+int softx86_decompile_exec_cs_ip(softx86_ctx* ctx);
+
+Sets the decompiler CS:IP pair to the same values as the registers CS:IP.
+Useful as a one-step method to decompile what is directly in front of the
+instruction pointer.
+
+softx86_ctx* ctx:		pointer to context structure.
+
+RETURN VALUES:
+
+0	Error
+1	Success
+
+------------------------------------------------------------------------------
+sx86_uword softx86_stack_popw(softx86_ctx* ctx);
+
+Pops a WORD-sized value from the stack and returns it to the caller.
+
+softx86_ctx* ctx:		pointer to context structure.
+
+RETURN VALUE: WORD value retrieved from stack.
+
+-------------------------------------------------------------------------------
+void softx86_stack_discard_n(softx86_ctx* ctx,int bytez);
+
+Increments the stack pointer by "bytez" bytes, effectively discarding the
+contents there.
+
+softx86_ctx* ctx:		pointer to context structure.
+int bytez:			number of bytes to discard from stack.
+
+------------------------------------------------------------------------------
+void softx86_stack_pushw(softx86_ctx* ctx,sx86_uword data);
+
+Pushes a WORD value onto the stack.
+
+softx86_ctx* ctx:		pointer to context structure.
+sx86_uword data:		data to place there.
+
+------------------------------------------------------------------------------
+int softx86_setsegval(softx86_ctx* ctx,int sreg_id,sx86_udword x);
+
+Sets a segment register value to 'x'.
+
+softx86_ctx* ctx:		pointer to context structure.
+int sreg_id:			numeric value that represents which segment
+				register to update.
+
+	SX86_SREG_CS			0		CS
+	SX86_SREG_DS			1		DS
+	SX86_SREG_ES			2		ES
+	SX86_SREG_SS			3		SS
+
+sx86_udword x:			value to place in segment registers.
+
+RETURN VALUE:
+
+0	Error.
+1	Success.
+
+------------------------------------------------------------------------------
+int softx86_set_instruction_ptr(softx86_ctx* ctx,sx86_udword cs,
+	sx86_udword ip);
+
+softx86_ctx* ctx:		pointer to context structure.
+sx86_udword cs:			new value of CS register.
+sx86_udword ip:			new value of IP register.
+
+RETURN VALUE:
+
+0	Error.
+1	Success.
+
+------------------------------------------------------------------------------
+int softx86_set_instruction_dec_ptr(softx86_ctx* ctx,
+	sx86_udword cs,sx86_udword ip);
+
+softx86_ctx* ctx:		pointer to context structure.
+sx86_udword cs:			segment to decompile from.
+sx86_udword ip:			offset within segment to decompile from.
+
+RETURN VALUE:
+
+0	Error.
+1	Success.
+
+-----------------------------------------------------------------------------
+int softx86_set_near_instruction_ptr(softx86_ctx* ctx,sx86_udword ip);
+
+softx86_ctx* ctx:		pointer to context structure.
+sx86_udword ip:			new value of IP (CS is unchanged).
+
+RETURN VALUE:
+
+0	Error.
+1	Success.
+
+-----------------------------------------------------------------------------
+int softx86_set_stack_ptr(softx86_ctx* ctx,sx86_udword ss,sx86_udword sp);
+
+softx86_ctx* ctx:		pointer to context structure.
+sx86_udword ss:			new value of SS
+sx86_udword sp:			new value of SP
+
+RETURN VALUE:
+
+0	Error.
+1	Success.
+
+----------------------------------------------------------------------------
+
+
+=============================================================================
+************************** INTERNAL FUNCTIONS FOR SOFTX86 *******************
+-----------------------------------------------------------------------------
+void softx86_fetch(softx86_ctx* ctx,void *reserved,sx86_udword addr,
+	void *buf,int sz);
+
+Fetches data from memory. Intended as a wrapper for memory access routines
+so calls to the host app for memory can run transparently through a cache.
+
+softx86_ctx* ctx:		pointer to context structure.
+void *reserved:			pointer to cache (to be implemented later),
+				or NULL.
+sx86_udword addr:		address to fetch from.
+void *buf:			pointer to buffer to place data in.
+int sz:				number of bytes to fetch.
+
+-----------------------------------------------------------------------------
+void softx86_write(softx86_ctx* ctx,void *reserved,sx86_udword addr,
+	void *buf,int sz);
+
+Writes contents of buffer 'buf' to memory. Intended as a wrapper for memory
+access routines so calls to the host app for memory can run transparently
+through a write-through cache.
+
+softx86_ctx* ctx:		pointer to context structure.
+void *reserved:			pointer to cache (to be implemented later),
+				or NULL.
+sx86_udword addr:		address to write to.
+void *buf:			pointer to buffer to write data from.
+int sz:				number of bytes to write.
+
+-----------------------------------------------------------------------------
+sx86_ubyte softx86_fetch_exec_byte(softx86_ctx* ctx);
+
+Fetches one byte from instruction pointer CS:IP. Increments CS:IP after
+byte is retrieved.
+
+softx86_ctx* ctx:		pointer to context structure.
+
+RETURN VALUE:
+
+byte fetched from instruction pointer.
+
+-----------------------------------------------------------------------------
+sx86_ubyte softx86_fetch_dec_byte(softx86_ctx* ctx);
+
+Fetches one byte from decompiler instruction pointer CS:IP. Increments
+the decompiler CS:IP after byte is retrieved.
+
+softx86_ctx* ctx:		pointer to context structure.
+
+RETURN VALUE:
+
+byte fetched from decompiler instruction pointer.
+
+-----------------------------------------------------------------------------
+

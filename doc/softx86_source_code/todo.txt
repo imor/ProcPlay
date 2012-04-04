@@ -1,0 +1,8 @@
+
+ - Most (if not the entire) x86 instruction set :)
+
+ - Correct me if I'm wrong about when certain instructions
+   (like BOUND) appeared in the 8086 instruction set. Nobody
+   seems to have clear-cut documentation on precisely what
+   revision added what instructions.
+

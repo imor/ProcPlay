@@ -1,0 +1,57 @@
+Softx86 library function summary.
+
+int softx86_init(softx86_ctx* ctx,int level);
+	initializes context structure for CPU emulation.
+
+int softx86_free(softx86_ctx* ctx);
+	de-initializes context structure.
+
+int softx86_step(softx86_ctx* ctx);
+	executes one instruction.
+
+int softx86_decompile(softx86_ctx* ctx,char asmbuf[256]);
+	decompiles one instruction (into human-readable assembly in asmbuf[])
+
+int softx86_decompile_exec_cs_ip(softx86_ctx* ctx);
+	sets decompiler CS:IP to executioneer CS:IP.
+
+sx86_uword softx86_stack_popw(softx86_ctx* ctx);
+	retrieves WORD value from stack.
+
+void softx86_stack_discard_n(softx86_ctx* ctx,int bytez);
+	discards 'bytez' bytes from the stack.
+
+void softx86_stack_pushw(softx86_ctx* ctx,sx86_uword data);
+	pushes 'data' onto stack as WORD value.
+
+int softx86_setsegval(softx86_ctx* ctx,int sreg_id,sx86_udword x);
+	sets given segment register value.
+
+int softx86_set_instruction_ptr(softx86_ctx* ctx,sx86_udword cs,
+	sx86_udword ip);
+	sets instruction pointer to cs:ip.
+
+int softx86_set_instruction_dec_ptr(softx86_ctx* ctx,
+	sx86_udword cs,sx86_udword ip);
+	sets decompiler instruction pointer to cs:ip.
+
+int softx86_set_near_instruction_ptr(softx86_ctx* ctx,sx86_udword ip);
+	sets instruction pointer to ip (CS unchanged).
+
+int softx86_set_stack_ptr(softx86_ctx* ctx,sx86_udword ss,sx86_udword sp);
+	sets stack pointer to ss:sp.
+
+void softx86_fetch(softx86_ctx* ctx,void *reserved,sx86_udword addr,
+	void *buf,int sz);
+	fetches data from memory, possibly through an internal CPU cache.
+
+void softx86_write(softx86_ctx* ctx,void *reserved,sx86_udword addr,
+	void *buf,int sz);
+	writes data to memory, possibly through an internal CPU cache.
+
+sx86_ubyte softx86_fetch_exec_byte(softx86_ctx* ctx);
+	fetches one byte from instruction pointer CS:IP.
+
+sx86_ubyte softx86_fetch_dec_byte(softx86_ctx* ctx);
+	fetches one byte from decompiler instruction pointer CS:IP.
+

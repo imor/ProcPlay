@@ -1,0 +1,137 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{fb8bed73-3acc-46a8-b0ed-8637a894eb98}</UniqueIdentifier>
+      <Extensions>cpp;c;cxx;rc;def;r;odl;idl;hpj;bat</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{8167db66-8108-439f-a79f-081cd8b0fade}</UniqueIdentifier>
+      <Extensions>h;hpp;hxx;hm;inl</Extensions>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="aaa.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="add.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="binops.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cbw.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="clc.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="drooling_duh.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="fpu.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="groupies.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="inc.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="interrupts.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ioport.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="jumpy.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="mov.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="optable.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="prefixes.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="procframe.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="pushpop.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="shovel.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="softx86.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="aaa.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="add.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="binops.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cbw.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="clc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="drooling_duh.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="fpu.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="groupies.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="inc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="interrupts.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ioport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="jumpy.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="mov.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="optable.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="prefixes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="procframe.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="pushpop.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="shovel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\softx86.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\softx86cfg.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="..\readme.txt" />
+  </ItemGroup>
+</Project>

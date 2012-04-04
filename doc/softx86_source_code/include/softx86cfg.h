@@ -42,10 +42,6 @@
 /* WE HAVE NO IDEA, SO WHOEVER IS COMPILING THE LIBRARY AND DEPENDENT
  * CODE NEEDS TO MODIFY THESE MANUALLY TO FIT THEIR PLATFORM */
 
-/* comment this out when you have modified the #defines below */
-/* obviously when you are done this needs to be removed :) */
-#error Unable to auto-detect your platform! You must modify softx86cfg.h manually!
-
 /* modify these to your platform. acceptable values are LE and BE */
 #define SX86_BYTE_ORDER			LE
 

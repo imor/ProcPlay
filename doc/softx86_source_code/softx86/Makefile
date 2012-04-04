@@ -5,6 +5,8 @@
 #       rather than mix them up with the source code. It's less messy
 #       that way. The only exception is the final output, softx86.o.
 
+SHELL:=/bin/bash
+
 all:: __obj ../lib/libsoftx86.a ../lib/libsoftx86.so
 
 ALL_OBJS = obj/aaa.o obj/add.o obj/cbw.o obj/clc.o obj/drooling_duh.o obj/optable.o obj/prefixes.o obj/procframe.o obj/pushpop.o obj/softx86.o obj/mov.o obj/ioport.o obj/inc.o obj/groupies.o obj/interrupts.o obj/binops.o obj/jumpy.o obj/shovel.o obj/fpu.o

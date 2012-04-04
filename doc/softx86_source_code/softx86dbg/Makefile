@@ -5,6 +5,8 @@
 #       rather than mix them up with the source code. It's less messy
 #       that way. The only exception is the final output, softx86.o.
 
+SHELL:=/bin/bash
+
 ALL_TARGETS = __obj ../bin/softx86dbg ../bin/softx86dbg-static
 ALL_OBJS = obj/main.o
 INCLUDZ = -I../include

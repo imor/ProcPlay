@@ -8,6 +8,8 @@
 # This Makefile really just calls Make to compile sub-projects.
 
 # make it all
+SHELL:=/bin/bash
+
 all:: __autodetect_softx87 __autodetect_nasm
 	make -C samples
 	make -C softx86

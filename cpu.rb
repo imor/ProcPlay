@@ -44,9 +44,5 @@ class Cpu
 
   def on_write_io(ctx, address, buf, buf_size)
   end
-
-  
-
 end
 
-c = Cpu.new

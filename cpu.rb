@@ -1,5 +1,6 @@
 require './softx86'
 require './libc'
+require './assembler'
 
 class Cpu
   include Softx86
@@ -23,11 +24,12 @@ class Cpu
   end
 
   def reset()
-    softx86_reset(@ctx.pointer)
-    LibC::memset(@ram, 0, RAM_SIZE)
+    softx86_reset(@ctx.pointer) # Reset the cpu
+    LibC::memset(@ram, 0, RAM_SIZE) # Zero out th memory
     
+    # Reset registers
     softx86_set_instruction_ptr(@ctx.pointer, SEGMENTS_BASE, )
-		softx86_set_stack_ptr(@ctx.pointer, SEGMENTS_BASE, 0x0)
+		softx86_set_stack_ptr(@ctx.pointer, SEGMENTS_BASE, SP_BASE)
 		softx86_setsegval(@ctx.pointer, SX86_SREG_DS, SEGMENTS_BASE)
 		softx86_setsegval(@ctx.pointer, SX86_SREG_ES, SEGMENTS_BASE)
   end
@@ -40,14 +42,23 @@ class Cpu
       raise RuntimeError "Error while executing instructions"
     end
   end
-
   
   
   private
 
+  include Assembler
+
   RAM_SIZE = 1024 * 1024 # 1 MB
   SEGMENTS_BASE = 0x1010
-  SP_BASE = 
+  SP_BASE = 0xFFFF
+
+
+  def load_instructions(instructions)
+    current_ip = @ctx[:state][:reg_ip]
+    next_ip = current_ip + 1
+    opcodes = assemble(instructions)
+  end
+
   def on_read_memory(ctx, address, buf, buf_size)
     if address >= RAM_SIZE
       cpsize = 0

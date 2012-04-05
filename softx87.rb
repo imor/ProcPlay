@@ -36,7 +36,7 @@ module Softx87
            :w, Softx86RegvalW
     )
   end
-   class Softx86Segregval < FFI::Struct
+  class Softx86Segregval < FFI::Struct
     layout(
            :val, :ushort,
            :cached_linear, :uint

@@ -98,7 +98,7 @@ static char* output_buffer_curr_offset;
 static int64_t output_buffer_size;
 
 
-static void output(int32_t segto, const void *data, enum out_type type, uint64_t size, int32_t segment, int32_t wrt)
+static void write_data(int32_t segto, const void *data, enum out_type type, uint64_t size, int32_t segment, int32_t wrt)
 {
     char* incoming;
     incoming = (char*)data;
@@ -124,7 +124,7 @@ int64_t assemble_instruction(char* mnemonic, char** output)
     uint32_t cpu;
     insn parsed_instruction;
 
-    out.output = output;
+    out.output = write_data;
     out.segbase = segbase;
 
     tolower_init();

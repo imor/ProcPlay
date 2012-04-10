@@ -3,8 +3,8 @@ require './asm'
 require './libc'
 
 module Assembler
-	def assemble(instructions)
-			
+	def self.assemble(instructions)
+
 		# buf_size = 0x800000 # Saw this size used in the demo provided with fasm library
 		# buffer = LibC::malloc BUF_SIZE
 		# max_no_of_passes = 100 # This is the recommended value in fasm library documentation

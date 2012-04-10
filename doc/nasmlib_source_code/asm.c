@@ -118,9 +118,8 @@ static void output_buffer_init()
 }
 
 /* Assembles the given instruction into a 32 bit Intel machine code */
-int64_t assemble_instruction(char* mnemonic, char** output)
+int64_t assemble_instruction(char* mnemonic, int bitsize, char** output)
 {
-    int bits;
     uint32_t cpu;
     insn parsed_instruction;
 
@@ -132,11 +131,10 @@ int64_t assemble_instruction(char* mnemonic, char** output)
     parse_line(mnemonic, &parsed_instruction);
 
     cpu = IF_PLEVEL;
-    bits = 32;
-    output_buffer_size = insn_size(bits, cpu, &parsed_instruction, nasm_error);        
+    output_buffer_size = insn_size(bitsize, cpu, &parsed_instruction, nasm_error);        
     output_buffer_init();
 
-    assemble(bits, cpu, &parsed_instruction, &out, nasm_error);
+    assemble(bitsize, cpu, &parsed_instruction, &out, nasm_error);
 
     cleanup_insn(&parsed_instruction);
 

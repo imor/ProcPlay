@@ -27,7 +27,7 @@ int main(int argc, char** argv)
 
     printf("Requested code for '%s'...\n", mnemonic);
 
-    output_size = assemble_instruction(mnemonic, &output);
+    output_size = assemble_instruction(mnemonic, 16, &output);
 
     printf("%s", "The output is: ");
     print_bytes(output, output_size);

@@ -86,7 +86,7 @@ nasm$(X): $(NASM) $(XOBJS)
 	$(CC) $(LDFLAGS) -shared -o libasm.so $(NASM) $(XOBJS) $(LIBS)
 
 genasm: nasm$(X)
-	$(CC) $(LDFLAGS) -o genasm genasm.c libasm.so
+	$(CC) $(LDFLAGS) -o genasm genasm.c ./libasm.so
 
 ndisasm$(X): $(NDISASM) $(XOBJS)
 	$(CC) $(LDFLAGS) -o ndisasm$(X) $(NDISASM) $(XOBJS) $(LIBS)

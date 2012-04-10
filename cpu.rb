@@ -1,16 +1,19 @@
 require './softx86'
 require './libc'
 require './assembler'
+require 'ffi'
 
 class Cpu
   include Softx86
 
   def initialize
+    @registers = {}
     @ctx = create_softx86context()
     @ram = create_ram()
     reset()
   end
 
+  # Resets the CPU
   def reset()
     softx86_reset(@ctx.pointer) # Reset the cpu
     LibC::memset(@ram, 0, RAM_SIZE) # Zero out the memory
@@ -20,6 +23,8 @@ class Cpu
 		softx86_set_stack_ptr(@ctx.pointer, SEGMENTS_BASE, SP_BASE)
 		softx86_setsegval(@ctx.pointer, SX86_SREG_DS, SEGMENTS_BASE)
 		softx86_setsegval(@ctx.pointer, SX86_SREG_ES, SEGMENTS_BASE)
+
+    update_registers_from_ctx()
   end
 
 
@@ -27,13 +32,27 @@ class Cpu
   def run(instruction_sequence)
     instruction_sequence.tr!(";", "\n") #Normalize to new line separators
     no_of_instructions = no_of_lines_in(instruction_sequence)
-    object_code = Assembler::assemble(instruction_sequence)
-    load_at_next_ip(object_code)
+    object_code = Assembler::assemble(instruction_sequence).join
+    load_at_current_ip(object_code)
 
     no_of_instructions.times { step() }
   end
+
+  # Gets the current register state
+  def registers()
+    @registers
+  end
   
-  
+  def dump_ram(address = 0x0, no_of_bytes = RAM_SIZE)
+    if no_of_bytes <=0
+      []
+    else
+      buffer = FFI::Buffer.new no_of_bytes
+      on_read_memory(@ctx, address, buffer, no_of_bytes)
+      buffer.read_array_of_char(no_of_bytes)
+    end
+  end
+
   private
 
   RAM_SIZE = 1024 * 1024 # 1 MB
@@ -41,11 +60,14 @@ class Cpu
   SP_BASE = 0xFFFF
   INITIAL_IP = 0x0
 
+  # Advances the CPU by one instrucitons
   def step()
     # Execute whatever is there at the current IP
     if !softx86_step(@ctx.pointer)
       raise RuntimeError "Error while executing instructions"
     end
+
+    update_registers_from_ctx()
   end
 
   def create_softx86context()
@@ -56,7 +78,7 @@ class Cpu
     context[:callbacks][:on_read_io] = method(:on_read_io).to_proc
     context[:callbacks][:on_write_io] = method(:on_write_io).to_proc
 
-    if !softx86_init(context.pointer, SX86_CPULEVEL_8086)
+    if !softx86_init(context.pointer, SX86_CPULEVEL_80286)
       raise RuntimeError "Failed to initialize softx86 library."
     end
 
@@ -67,9 +89,11 @@ class Cpu
     return LibC::malloc(RAM_SIZE)
   end
 
-  def load_at_next_ip(object_code)
-    current_ip = @ctx[:state][:reg_ip]
-    next_ip = current_ip + 1
+  def load_at_current_ip(object_code)
+    buffer = FFI::Buffer.new object_code.length
+    buffer.write_bytes(object_code)
+    current_ip = @ctx[:state][:reg_ip] + SEGMENTS_BASE
+    on_write_memory(@ctx, current_ip, buffer, object_code.length)
   end
 
 
@@ -129,5 +153,25 @@ class Cpu
     return str.lines.inject(0) { |c, line| c + 1}
   end
 
+  # Copies the current register state from @ctx to @registers field
+  def update_registers_from_ctx()
+    general_reg_array = @ctx[:state][:general_reg]
+    @registers[:ax] = general_reg_array[SX86_REG_AX][:val] 
+    @registers[:bx] = general_reg_array[SX86_REG_BX][:val] 
+    @registers[:cx] = general_reg_array[SX86_REG_CX][:val] 
+    @registers[:dx] = general_reg_array[SX86_REG_DX][:val] 
+    @registers[:sp] = general_reg_array[SX86_REG_SP][:val] 
+    @registers[:bp] = general_reg_array[SX86_REG_BP][:val] 
+    @registers[:si] = general_reg_array[SX86_REG_SI][:val] 
+    @registers[:di] = general_reg_array[SX86_REG_DI][:val]
+
+    segment_reg_array = @ctx[:state][:segment_reg]
+    @registers[:es] = segment_reg_array[SX86_SREG_ES][:val] 
+    @registers[:cs] = segment_reg_array[SX86_SREG_CS][:val] 
+    @registers[:ss] = segment_reg_array[SX86_SREG_SS][:val] 
+    @registers[:ds] = segment_reg_array[SX86_SREG_DS][:val] 
+
+    @registers[:ip] = @ctx[:state][:reg_ip]
+  end
 end
 

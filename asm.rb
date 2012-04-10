@@ -12,5 +12,5 @@ module Asm
 		raise RuntimeError "Platform not supported. Only windows or unix platforms are supported."
 	end
 
-  attach_function :assemble_instruction, [ :string, :pointer ], :ulong # TODO: confirm that the return type should is indeed ulong
+  attach_function :assemble_instruction, [ :string, :int, :pointer ], :ulong # TODO: confirm that the return type should indeed be ulong
 end

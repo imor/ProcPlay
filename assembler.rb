@@ -1,20 +1,22 @@
 # require './fasm'
 require './asm'
 require './libc'
-
+require 'ffi'
 module Assembler
-	def self.assemble(instructions)
-
-		# buf_size = 0x800000 # Saw this size used in the demo provided with fasm library
-		# buffer = LibC::malloc BUF_SIZE
-		# max_no_of_passes = 100 # This is the recommended value in fasm library documentation
-		# output_pipe = nil # We don't want no output to any pipe
-		# status = Fasm::fasm_Assemble(instructions, buffer, BUF_SIZE, output_pipe)
-
-		# if status != Fasm::FASM_OK
-		# 	raise RuntimeError "Failed to assemble instruction #{instruction}"
-		# end
-
-		# return buffer[:output_data].read_string()
+	def self.assemble(instruction_sequence)
+		instruction_sequence.tr!(";", "\n") #Normalize to new line separators
+		instruction_sequence.each_line.map { |i| assemble_instruction i }.flatten
 	end
+
+	private 
+	def self.assemble_instruction(instruction)
+		out_ptr = FFI::MemoryPointer.new 4
+		size_of_machine_code = Asm::assemble_instruction(instruction, out_ptr)
+		
+		address_of_machine_code = out_ptr.read_int()
+		ptr_to_machine_code = FFI::Pointer.new(address_of_machine_code)
+		
+		ptr_to_machine_code.read_bytes(size_of_machine_code)
+	end
+
 end

@@ -13,7 +13,7 @@ class Cpu
 
   def reset()
     softx86_reset(@ctx.pointer) # Reset the cpu
-    LibC::memset(@ram, 0, RAM_SIZE) # Zero out th memory
+    LibC::memset(@ram, 0, RAM_SIZE) # Zero out the memory
     
     # Reset registers
     softx86_set_instruction_ptr(@ctx.pointer, SEGMENTS_BASE, INITIAL_IP)
@@ -72,10 +72,6 @@ class Cpu
     next_ip = current_ip + 1
   end
 
-  def assemble(instruction_sequence)
-    
-    return Assembler::assemble
-  end
 
   def on_read_memory(ctx, address, buf, buf_size)
     if address >= RAM_SIZE

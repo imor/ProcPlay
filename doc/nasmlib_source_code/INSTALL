@@ -1,5 +1,5 @@
 To build:
-
+$ sh autogen.sh
 $ ./configure
 $ make
 

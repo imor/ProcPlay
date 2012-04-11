@@ -7,7 +7,7 @@
 
 SHELL:=/bin/bash
 
-ALL_TARGETS = __obj ../bin/softx86dbg ../bin/softx86dbg-static
+ALL_TARGETS = __obj __bin ../bin/softx86dbg ../bin/softx86dbg-static
 ALL_OBJS = obj/main.o
 INCLUDZ = -I../include
 LIBINCLUDZ = -L../lib
@@ -35,6 +35,11 @@ distclean:: clean
 # make sure there is an "obj" subdirectory
 __obj:
 	if [[ !(-d obj) ]]; then mkdir obj; fi
+
+# make sure there is an "../bin" directory
+__bin:
+	if [[ !(-d ../bin) ]]; then mkdir ../bin; fi
+
 
 obj/main.o: main.cpp
 	g++ $(INCLUDZ) -c -o obj/main.o main.cpp

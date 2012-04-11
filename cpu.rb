@@ -64,7 +64,7 @@ class Cpu
   def step()
     # Execute whatever is there at the current IP
     if !softx86_step(@ctx.pointer)
-      raise RuntimeError "Error while executing instructions"
+      raise "Error while executing instruction"
     end
 
     update_registers_from_ctx()
@@ -73,13 +73,14 @@ class Cpu
   def create_softx86context()
     context = Softx86Ctx.new
     
+    # TODO: for some reason these callbacks are not being assigned correctly to the context. the context, for example, is still calling its default memory callback.  
     context[:callbacks][:on_read_memory] = method(:on_read_memory).to_proc
     context[:callbacks][:on_write_memory] = method(:on_write_memory).to_proc
     context[:callbacks][:on_read_io] = method(:on_read_io).to_proc
     context[:callbacks][:on_write_io] = method(:on_write_io).to_proc
 
-    if !softx86_init(context.pointer, SX86_CPULEVEL_80286)
-      raise RuntimeError "Failed to initialize softx86 library."
+    if !softx86_init(context.pointer, SX86_CPULEVEL_8086)
+      raise "Failed to initialize softx86 library." #TODO: IS IT OKAY TO RAISE A STRING?
     end
 
     return context
@@ -92,7 +93,7 @@ class Cpu
   def load_at_current_ip(object_code)
     buffer = FFI::Buffer.new object_code.length
     buffer.write_bytes(object_code)
-    current_ip = @ctx[:state][:reg_ip] + SEGMENTS_BASE
+    current_ip = registers[:ip] + @ctx[:state][:segment_reg][SX86_SREG_CS][:cached_linear]
     on_write_memory(@ctx, current_ip, buffer, object_code.length)
   end
 

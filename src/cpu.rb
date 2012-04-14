@@ -73,15 +73,14 @@ class Cpu
   def create_softx86context()
     context = Softx86Ctx.new
     
-    # TODO: for some reason these callbacks are not being assigned correctly to the context. the context, for example, is still calling its default memory callback.  
+    if !softx86_init(context.pointer, SX86_CPULEVEL_8086)
+      raise "Failed to initialize softx86 library." #TODO: IS IT OKAY TO RAISE A STRING?
+    end
+
     context[:callbacks][:on_read_memory] = method(:on_read_memory).to_proc
     context[:callbacks][:on_write_memory] = method(:on_write_memory).to_proc
     context[:callbacks][:on_read_io] = method(:on_read_io).to_proc
     context[:callbacks][:on_write_io] = method(:on_write_io).to_proc
-
-    if !softx86_init(context.pointer, SX86_CPULEVEL_8086)
-      raise "Failed to initialize softx86 library." #TODO: IS IT OKAY TO RAISE A STRING?
-    end
 
     return context
   end

@@ -6,8 +6,7 @@ module Asm
 	if FFI::Platform.unix?
 		ffi_lib "../lib/libasm.so"
 	elsif FFI::Platform.windows?
-		# TODO: Add support for Windows.
-		#ffi_lib "../lib/asm.dll"
+		ffi_lib "../lib/asm.dll"
 	else
 		raise RuntimeError "Platform not supported. Only windows or unix platforms are supported."
 	end

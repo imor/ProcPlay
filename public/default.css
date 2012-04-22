@@ -1,0 +1,13 @@
+article {
+	margin: 0 auto;
+	width: 760px;
+}
+
+#announce {
+	text-align: justify;
+	background-color: red;
+}
+
+footer {
+	font: 50% "Lucida Grande", "Trebuchet MS", Verdana, sans-serif;
+}

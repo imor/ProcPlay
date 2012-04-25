@@ -1,0 +1,384 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<!--A sample simulator using just the r-format instructions-->
+<Simulator>
+	<simname>MIPS R2000 Single-Cycle - Just Arithmetic R-Format Instructions</simname>
+	<SuportedISA>and, or, add, sub</SuportedISA>
+	<Options resetEveryRound="true"/>
+	<Component>
+		<name>InstrMemory</name>
+		<description>Intruction Memory</description>
+		<outputBuses>
+			<output name="Intruction" bits="32" alternativeStr="true">
+				<to name="Instr" comp="Spliter"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="PCAddress" bits="32"/>
+		</inputBuses>
+		<operations>
+			<op name="ReadAddress">
+				<dependsOn which="always" if="always"/>
+				<do func="getInstruction">
+					<inputs>
+						<in name="PCAddress"/>
+					</inputs>
+					<outputs>
+						<out name="Intruction"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+
+	<!--just for giving the zero bus something to input to -->
+	<Component>
+		<name>B</name>
+		<description>Zero input</description>
+		<inputBuses>
+			<input name="Z" bits="1"/>
+		</inputBuses>
+	</Component>
+	
+	<Component>
+		<name>Main ALU</name>
+		<description>Arithmetic Logic Unit</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="Result" bits="32" alternativeStr="true"  optional="true">
+				<to name="WriteData" comp="Registers"/>
+			</output>
+			<output name="zero" bits="1">
+				<to name="Z" comp="B"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="ALUOp" bits="3"/>
+			<input name="ALUInp1" bits="32"/>
+			<input name="ALUInp2" bits="32"/>
+		</inputBuses>
+		<operations>
+			<op name="sub">
+				<dependsOn which="ALUOp" if="110"/>
+				<do func="sub">
+					<inputs>
+						<in name="ALUInp1"/>
+						<in name="ALUInp2"/>
+					</inputs>
+					<outputs>
+						<out name="Result"/>
+						<out name="zero"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="add">
+				<dependsOn which="ALUOp" if="010"/>
+				<do func="add">
+					<inputs>
+						<in name="ALUInp1"/>
+						<in name="ALUInp2"/>
+					</inputs>
+					<outputs>
+						<out name="Result"/>
+						<out name="zero"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="and">
+				<dependsOn which="ALUOp" if="000"/>
+				<do func="and">
+					<inputs>
+						<in name="ALUInp1"/>
+						<in name="ALUInp2"/>
+					</inputs>
+					<outputs>
+						<out name="Result"/>
+						<out name="zero"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="or">
+				<dependsOn which="ALUOp" if="001"/>
+				<do func="or">
+					<inputs>
+						<in name="ALUInp1"/>
+						<in name="ALUInp2"/>
+					</inputs>
+					<outputs>
+						<out name="Result"/>
+						<out name="zero"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	
+	<Component>
+		<name>Control</name>
+		<description>Control Unit</description>
+		<outputBuses>
+			<output name="RegWrite" bits="1">
+				<to name="RegWrite" comp="Registers"/>
+			</output>
+		</outputBuses>
+		<operations>
+			<op name="control-rformat">
+				<dependsOn which="always" if="always"/>
+				<do func="out" out="1">
+					<outputs>
+						<out name="RegWrite"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	
+	<Component>
+		<name>ALUControl</name>
+		<description>ALU Control Unit</description>
+		<outputBuses>
+			<output name="ALUOp" bits="3">
+				<to name="ALUOp" comp="Main ALU"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="funcField" bits="6"/>
+		</inputBuses>
+		<operations>
+			<op name="control-add">
+				<dependsOn which="funcField" if="100000"/>
+				<do func="out" out="010">
+					<outputs>
+						<out name="ALUOp"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="control-sub">
+				<dependsOn which="funcField" if="100010"/>
+				<do func="out" out="110">
+					<outputs>
+						<out name="ALUOp"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="control-and">
+				<dependsOn which="funcField" if="100100"/>
+				<do func="out" out="000">
+					<outputs>
+						<out name="ALUOp"/>
+					</outputs>
+				</do>
+			</op>			
+			<op name="control-or">
+				<dependsOn which="funcField" if="100101"/>
+				<do func="out" out="001">
+					<outputs>
+						<out name="ALUOp"/>
+					</outputs>
+				</do>
+			</op>	
+		</operations>
+	</Component>
+		
+	<Component>
+		<name>Registers</name>
+		<description>Set of Registers</description>
+		<outputBuses>
+			<output name="ReadData" bits="32" alternativeStr="true">
+				<to name="ALUInp1" comp="Main ALU"/>
+			</output>
+			<output name="ReadData2" bits="32" alternativeStr="true">
+				<to name="ALUInp2" comp="Main ALU"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="ReadReg1" bits="5"/>
+			<input name="ReadReg2" bits="5"/>
+			<input name="WriteReg" bits="5"/>
+			<input name="WriteData" bits="32"/>
+			<input name="RegWrite" bits="1"/>
+		</inputBuses>
+		<operations>
+			<op name="ReadReg1">
+				<dependsOn which="always" if="always"/>
+				<do func="readreg">
+					<inputs>
+						<in name="ReadReg1"/>
+					</inputs>
+					<outputs>
+						<out name="ReadData"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="ReadReg2">
+				<dependsOn which="always" if="always"/>
+				<do func="readreg">
+					<inputs>
+						<in name="ReadReg2"/>
+					</inputs>
+					<outputs>
+						<out name="ReadData2"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="WriteData">
+				<dependsOn which="RegWrite" if="1"/>
+				<do func="writereg">
+					<inputs>
+						<in name="WriteReg"/>
+						<in name="WriteData"/>
+					</inputs>
+					<outputs>
+						<out name="ReadData2"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	
+	<Component>
+		<name>PC</name>
+		<description>Progam Counter</description>
+		<specialComponent comp="StartComp"/>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="PC" bits="32" alternativeStr="true">
+				<to name="PC" comp="ALUIncr"/>
+				<to name="PCAddress" comp="InstrMemory"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="newPC" bits="32"/>
+		</inputBuses>
+		<operations>
+			<op name="ReadReg1">
+				<dependsOn which="always" if="always"/>
+				<do func="mux">
+					<inputs>
+						<in name="newPC"/>
+					</inputs>
+					<outputs>
+						<out name="PC"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+
+	<Component>
+		<name>Spliter</name>
+		<description>Instruction Spliter</description>
+		<outputBuses>
+			<output name="Rs: 25-21" bits="5">
+				<to name="ReadReg1" comp="Registers"/>
+			</output>
+			<output name="Rt: 20-16" bits="5">
+				<to name="ReadReg2" comp="Registers"/>
+			</output>
+			<output name="Rd: 15-11" bits="5">
+				<to name="WriteReg" comp="Registers"/>
+			</output>
+			<output name="Func: 31-26" bits="6">
+				<to name="funcField" comp="ALUControl"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="Instr" bits="32"/>
+		</inputBuses>
+		<operations>
+			<op name="Rs25-21">
+				<dependsOn which="always" if="always"/>
+				<do func="split" out="25-21">
+					<inputs>
+						<in name="Instr"/>
+					</inputs>
+					<outputs>
+						<out name="Rs: 25-21"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="Rt20-16">
+				<dependsOn which="always" if="always"/>
+				<do func="split" out="20-16">
+					<inputs>
+						<in name="Instr"/>
+					</inputs>
+					<outputs>
+						<out name="Rt: 20-16"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="Rd15-11">
+				<dependsOn which="always" if="always"/>
+				<do func="split" out="15-11">
+					<inputs>
+						<in name="Instr"/>
+					</inputs>
+					<outputs>
+						<out name="Rd: 15-11"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="Func31-26">
+				<dependsOn which="always" if="always"/>
+				<do func="split" out="5-0">
+					<inputs>
+						<in name="Instr"/>
+					</inputs>
+					<outputs>
+						<out name="Func: 31-26"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+		
+	<Component>
+		<name>Out4</name>
+		<description>For incrementing PC by 4</description>
+		<hidden>true</hidden>
+		<outputBuses>
+			<output name="out4" bits="32">
+				<to name="Increm4" comp="ALUIncr"/>
+			</output>
+		</outputBuses>
+		<operations>
+			<op name="out4">
+				<dependsOn which="always" if="always"/>
+				<do func="out" out="100">
+					<outputs>
+						<out name="out4"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	
+	<Component>
+		<name>ALUIncr</name>
+		<description>Increment PC ALU</description>
+		<outputBuses>
+			<output name="PC+4" bits="32">
+				<to name="newPC" comp="PC"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="Increm4" bits="32"/>
+			<input name="PC" bits="32"/>			
+		</inputBuses>
+		<operations>
+			<op name="increm4">
+				<dependsOn which="always" if="always"/>
+				<do func="add">
+					<inputs>
+						<in name="Increm4"/>
+						<in name="PC"/>
+					</inputs>
+					<outputs>
+						<out name="PC+4"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+
+</Simulator>

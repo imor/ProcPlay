@@ -1,0 +1,122 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+
+<!--A sample simulator showing the datapath that: Fetches an instruction and Increments the PC-->
+
+<Simulator>
+	<simname>MIPS R2000 Single-Cycle - Datapath to fetch an instruction and increment the PC</simname>
+	<Options resetEveryRound="true"/>
+	<Component>
+		<name>Instruction Memory</name>
+		<specialComponent comp="InstructionMemory"/>
+		<description>Intruction Memory</description>
+		<outputBuses>
+			<output name="Intruction" bits="32" alternativeStr="true">
+				<to name="Instr" comp="I"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="PC Address" bits="32"/>
+		</inputBuses>
+		<operations>
+			<op name="ReadAddress">
+				<dependsOn which="always" if="always"/>
+				<do func="getInstruction">
+					<inputs>
+						<in name="PC Address"/>
+					</inputs>
+					<outputs>
+						<out name="Intruction"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+
+	
+	<Component>
+		<name>PC</name>
+		<description>Progam Counter</description>
+		<specialComponent comp="StartComp"/>
+		<outputBuses>
+			<output name="PC" bits="32" alternativeStr="true">
+				<to name="PC" comp="Increment PC"/>
+				<to name="PC Address" comp="Instruction Memory"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="New PC" bits="32"/>
+		</inputBuses>
+		<operations>
+			<op name="pc do nothing">
+				<dependsOn which="always" if="always"/>
+				<do func="mux">
+					<inputs>
+						<in name="New PC"/>
+					</inputs>
+					<outputs>
+						<out name="PC"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	
+	<Component>
+		<name>Out4</name>
+		<description>For incrementing PC by 4</description>
+		<hidden>true</hidden>
+		<outputBuses>
+			<output name="out4" bits="32" alternativeStr="true">
+				<to name="Val 4" comp="Increment PC"/>
+			</output>
+		</outputBuses>
+		<operations>
+			<op name="out4">
+				<dependsOn which="always" if="always"/>
+				<do func="out" out="100">
+					<outputs>
+						<out name="out4"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	
+	<Component>
+		<name>Increment PC</name>
+		<description>Increment PC ALU</description>
+		<outputBuses>
+			<output name="PC+4" bits="32" alternativeStr="true">
+				<to name="New PC" comp="PC"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="Val 4" bits="32"/>
+			<input name="PC" bits="32"/>			
+		</inputBuses>
+		<operations>
+			<op name="increm4">
+				<dependsOn which="always" if="always"/>
+				<do func="add">
+					<inputs>
+						<in name="Val 4"/>
+						<in name="PC"/>
+					</inputs>
+					<outputs>
+						<out name="PC+4"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+
+	<!--Just to make sure the instruction memory has something to output to-->
+	<Component>
+		<name>I</name>
+		<description>Instruction Input</description>
+		<inputBuses>
+			<input name="Instr" bits="32"/>	
+		</inputBuses>
+	</Component>
+
+</Simulator>

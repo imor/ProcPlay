@@ -1,0 +1,1004 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<!--A sample simulator using most of the supported functions-->
+<Simulator>
+	<simname>MIPS R2000 Single-Cycle - R-Format, beq, store/load and jump</simname>
+	<SuportedISA>and, or, add, sub, slt, beq, sw, lw, j</SuportedISA>
+	<Options resetEveryRound="true"/>
+	<Component>
+		<name>InstrMemory</name>
+		<specialComponent comp="InstructionMemory"/>
+		<description>Intruction Memory</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="Intruction" bits="32" alternativeStr="true">
+				<to name="Instr" comp="Spliter"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="PCAddress" bits="32"/>
+		</inputBuses>
+		<operations>
+			<op name="ReadAddress">
+				<dependsOn which="always" if="always"/>
+				<do func="getInstruction">
+					<inputs>
+						<in name="PCAddress"/>
+					</inputs>
+					<outputs>
+						<out name="Intruction"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+
+	<Component>
+		<name>Main ALU</name>
+		<description>Arithmetic Logic Unit</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="result" bits="32" alternativeStr="true">
+				<to name="Address" comp="Memory"/>
+				<to name="In0Result" comp="Mux3"/>
+			</output>
+			<output name="zero" bits="1">
+				<to name="ANDZeroIn" comp="AND1"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="ALUOp" bits="3"/>
+			<input name="ALUInp1" bits="32"/>
+			<input name="ALUInp2" bits="32"/>
+		</inputBuses>
+		<operations>
+			<op name="sub">
+				<dependsOn which="ALUOp" if="110"/>
+				<do func="sub">
+					<inputs>
+						<in name="ALUInp1"/>
+						<in name="ALUInp2"/>
+					</inputs>
+					<outputs>
+						<out name="result"/>
+						<out name="zero"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="add">
+				<dependsOn which="ALUOp" if="010"/>
+				<do func="add">
+					<inputs>
+						<in name="ALUInp1"/>
+						<in name="ALUInp2"/>
+					</inputs>
+					<outputs>
+						<out name="result"/>
+						<out name="zero"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="and">
+				<dependsOn which="ALUOp" if="000"/>
+				<do func="and">
+					<inputs>
+						<in name="ALUInp1"/>
+						<in name="ALUInp2"/>
+					</inputs>
+					<outputs>
+						<out name="result"/>
+						<out name="zero"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="or">
+				<dependsOn which="ALUOp" if="001"/>
+				<do func="or">
+					<inputs>
+						<in name="ALUInp1"/>
+						<in name="ALUInp2"/>
+					</inputs>
+					<outputs>
+						<out name="result"/>
+						<out name="zero"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="slt">
+				<dependsOn which="ALUOp" if="111"/>
+				<do func="slt">
+					<inputs>
+						<in name="ALUInp1"/>
+						<in name="ALUInp2"/>
+					</inputs>
+					<outputs>
+						<out name="result"/>
+						<out name="zero"/>
+					</outputs>
+				</do>
+			</op>			
+		</operations>
+	</Component>
+	<Component>
+		<name>AND1</name>
+		<description>AND - for Branch Intr</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="AND1Out" bits="1">
+				<to name="PCSrc" comp="Mux2"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="BranchIn" bits="1"/>
+			<input name="ANDZeroIn" bits="1"/>
+		</inputBuses>
+		<operations>
+			<op name="and">
+				<dependsOn which="always" if="always"/>
+				<do func="and">
+					<inputs>
+						<in name="BranchIn"/>
+						<in name="ANDZeroIn"/>
+					</inputs>
+					<outputs>
+						<out name="AND1Out"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	<Component>
+		<name>Memory</name>
+		<specialComponent comp="MainMemory"/>
+		<description>Data Memory</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="ReadData" bits="32" optional="true" optionalDependsOn="MemRead"  optionalComp="Control" optionalIf="0" alternativeStr="true">
+				<to name="In1Data" comp="Mux3"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="Address" bits="32"/>
+			<input name="Write Data" bits="32"/>
+			<input name="MemWrite" bits="1"/>
+			<input name="MemRead" bits="1"/>
+		</inputBuses>
+		<operations>
+			<op name="readmem">
+				<dependsOn which="MemRead" if="1"/>
+				<do func="readmem">
+					<inputs>
+						<in name="Address"/>
+					</inputs>
+					<outputs>
+						<out name="ReadData"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="writemem">
+				<dependsOn which="MemWrite" if="1"/>
+				<do func="writemem">
+					<inputs>
+						<in name="Address"/>
+						<in name="Write Data"/>
+					</inputs>
+				</do>
+			</op>
+			<op name="donothing">
+				<dependsOn which="always" if="always"/>
+				<do func="donothing">
+				</do>
+			</op>
+		</operations>
+	</Component>
+	<Component>
+		<name>Mux3</name>
+		<description>Multiplexor ALU result or data</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="Data" bits="32"  optional="true" finalBus="true" alternativeStr="true">
+				<to name="WriteData" comp="Registers"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="In1Data" bits="32"/>
+			<input name="In0Result" bits="32"/>
+			<input name="MemOrResultToReg" bits="1"/>
+		</inputBuses>
+		<operations>
+			<op name="memtoreg">
+				<dependsOn which="MemOrResultToReg" if="1"/>
+				<do func="mux">
+					<inputs>
+						<in name="In1Data"/>
+					</inputs>
+					<outputs>
+						<out name="Data"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="resulttoreg">
+				<dependsOn which="MemOrResultToReg" if="0"/>
+				<do func="mux">
+					<inputs>
+						<in name="In0Result"/>
+					</inputs>
+					<outputs>
+						<out name="Data"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	
+	<Component>
+		<name>Control</name>
+		<description>Control Unit</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="RegDst" bits="1">
+				<to name="RegDst" comp="Mux1"/>
+			</output>
+			<output name="Branch" bits="1">
+				<to name="BranchIn" comp="AND1"/>
+			</output>
+			<output name="MemRead" bits="1">
+				<to name="MemRead" comp="Memory"/>
+			</output>
+			<output name="MemtoReg" bits="1">
+				<to name="MemOrResultToReg" comp="Mux3"/>
+			</output>
+			<output name="MemWrite" bits="1">
+				<to name="MemWrite" comp="Memory"/>
+			</output>
+			<output name="RegWrite" bits="1">
+				<to name="RegWrite" comp="Registers"/>
+			</output>
+			<output name="ALUSrc" bits="1">
+				<to name="ALUSrc" comp="Mux4"/>
+			</output>
+			<output name="ALUOp" bits="2">
+				<to name="ALUOp" comp="ALUControl"/>
+			</output>
+			<output name="Jump" bits="1">
+				<to name="Jump" comp="Mux5"/>
+			</output>			
+		</outputBuses>
+		<inputBuses>
+			<input name="InControl" bits="6"/>
+		</inputBuses>
+		<operations>
+			<op name="control-sw">
+				<dependsOn which="InControl" if="100011"/>
+				<do func="bitout" out="0111100000">
+					<outputs>
+						<out name="RegDst"/>
+						<out name="ALUSrc"/>
+						<out name="MemtoReg"/>
+						<out name="RegWrite"/>
+						<out name="MemRead"/>
+						<out name="MemWrite"/>
+						<out name="Branch"/>
+						<out name="ALUOp"/>
+						<out name="Jump"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="control-lw">
+				<dependsOn which="InControl" if="101011"/>
+				<do func="bitout" out="0100010000">
+					<outputs>
+						<out name="RegDst"/>
+						<out name="ALUSrc"/>
+						<out name="MemtoReg"/>
+						<out name="RegWrite"/>
+						<out name="MemRead"/>
+						<out name="MemWrite"/>
+						<out name="Branch"/>
+						<out name="ALUOp"/>
+						<out name="Jump"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="control-beq">
+				<dependsOn which="InControl" if="000100"/>
+				<do func="bitout" out="0000001010">
+					<outputs>
+						<out name="RegDst"/>
+						<out name="ALUSrc"/>
+						<out name="MemtoReg"/>
+						<out name="RegWrite"/>
+						<out name="MemRead"/>
+						<out name="MemWrite"/>
+						<out name="Branch"/>
+						<out name="ALUOp"/>
+						<out name="Jump"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="control-rformat">
+				<dependsOn which="InControl" if="000000"/>
+				<do func="bitout" out="1001000100">
+					<outputs>
+						<out name="RegDst"/>
+						<out name="ALUSrc"/>
+						<out name="MemtoReg"/>
+						<out name="RegWrite"/>
+						<out name="MemRead"/>
+						<out name="MemWrite"/>
+						<out name="Branch"/>
+						<out name="ALUOp"/>
+						<out name="Jump"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="control-j">
+				<dependsOn which="InControl" if="000010"/>
+				<do func="bitout" out="0000000001">
+					<outputs>
+						<out name="RegDst"/>
+						<out name="ALUSrc"/>
+						<out name="MemtoReg"/>
+						<out name="RegWrite"/>
+						<out name="MemRead"/>
+						<out name="MemWrite"/>
+						<out name="Branch"/>
+						<out name="ALUOp"/>
+						<out name="Jump"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	
+	<Component>
+		<name>ALUControl</name>
+		<description>ALU Control Unit</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="ALUOp" bits="3">
+				<to name="ALUOp" comp="Main ALU"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="funcField" bits="6"/>
+			<input name="ALUOp" bits="2"/>
+		</inputBuses>
+		<operations>
+			<op name="control-lw,sw">
+				<dependsOn which="ALUOp" if="00"/>
+				<do func="out" out="010">
+					<outputs>
+						<out name="ALUOp"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="control-beq">
+				<dependsOn which="ALUOp" if="01"/>
+				<do func="out" out="110">
+					<outputs>
+						<out name="ALUOp"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="control-add">
+				<dependsOn which="ALUOp" if="10"/>
+				<dependsOn which="funcField" if="100000"/>
+				<do func="out" out="010">
+					<outputs>
+						<out name="ALUOp"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="control-sub">
+				<dependsOn which="ALUOp" if="10"/>
+				<dependsOn which="funcField" if="100010"/>
+				<do func="out" out="110">
+					<outputs>
+						<out name="ALUOp"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="control-and">
+				<dependsOn which="ALUOp" if="10"/>
+				<dependsOn which="funcField" if="100100"/>
+				<do func="out" out="000">
+					<outputs>
+						<out name="ALUOp"/>
+					</outputs>
+				</do>
+			</op>			
+			<op name="control-or">
+				<dependsOn which="ALUOp" if="10"/>
+				<dependsOn which="funcField" if="100101"/>
+				<do func="out" out="001">
+					<outputs>
+						<out name="ALUOp"/>
+					</outputs>
+				</do>
+			</op>					
+			<op name="control-slt">
+				<dependsOn which="ALUOp" if="10"/>
+				<dependsOn which="funcField" if="101010"/>
+				<do func="out" out="111">
+					<outputs>
+						<out name="ALUOp"/>
+					</outputs>
+				</do>
+			</op>				
+		</operations>
+	</Component>
+	
+	<Component>
+		<name>ALUBranch</name>
+		<description>Calc Branch Target ALU</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="result" bits="32">
+				<to name="in1ALUBranch" comp="Mux2"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="PC+4" bits="32"/>
+			<input name="AddressField" bits="32"/>
+		</inputBuses>
+		<operations>
+			<op name="add">
+				<do func="add">
+					<inputs>
+						<in name="PC+4"/>
+						<in name="AddressField"/>
+					</inputs>
+					<outputs>
+						<out name="result"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	<Component>
+		<name>Mux2</name>
+		<description>Multiplexor branch or +4</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="newPC" bits="32">
+				<to name="newPC" comp="Mux5"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="PCSrc" bits="1"/>
+			<input name="in1ALUBranch" bits="32"/>
+			<input name="in0PCIncrem" bits="32"/>
+		</inputBuses>
+		<operations>
+			<op name="branchtoPC">
+				<dependsOn which="PCSrc" if="1"/>
+				<do func="mux">
+					<inputs>
+						<in name="in1ALUBranch"/>
+					</inputs>
+					<outputs>
+						<out name="newPC"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="IncremPC">
+				<dependsOn which="PCSrc" if="0"/>
+				<do func="mux">
+					<inputs>
+						<in name="in0PCIncrem"/>
+					</inputs>
+					<outputs>
+						<out name="newPC"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	
+	<Component>
+		<name>Mux1</name>
+		<description>Multiplexor Reg Dest</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="WriteReg" bits="5">
+				<to name="WriteReg" comp="Registers"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="RegDst" bits="1"/>
+			<input name="ReadReg2" bits="5"/>
+			<input name="in1WriteReg" bits="5"/>
+		</inputBuses>
+		<operations>
+			<op name="WriteReg2">
+				<dependsOn which="RegDst" if="0"/>
+				<do func="mux">
+					<inputs>
+						<in name="ReadReg2"/>
+					</inputs>
+					<outputs>
+						<out name="WriteReg"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="WriteReg">
+				<dependsOn which="RegDst" if="1"/>
+				<do func="mux">
+					<inputs>
+						<in name="in1WriteReg"/>
+					</inputs>
+					<outputs>
+						<out name="WriteReg"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	
+	<Component>
+		<name>Mux4</name>
+		<description>Multiplexor ReadData or Const</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="ALUInp2" bits="32" alternativeStr="true">
+				<to name="ALUInp2" comp="Main ALU"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="ALUSrc" bits="1"/>
+			<input name="in0ReadData" bits="32"/>
+			<input name="in1Const" bits="32"/>
+		</inputBuses>
+		<operations>
+			<op name="ReadData">
+				<dependsOn which="ALUSrc" if="0"/>
+				<do func="mux">
+					<inputs>
+						<in name="in0ReadData"/>
+					</inputs>
+					<outputs>
+						<out name="ALUInp2"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="Const">
+				<dependsOn which="ALUSrc" if="1"/>
+				<do func="mux">
+					<inputs>
+						<in name="in1Const"/>
+					</inputs>
+					<outputs>
+						<out name="ALUInp2"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+
+	
+	<Component>
+		<name>Registers</name>
+		<specialComponent comp="Registers"/>
+		<description>Set of Registers</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="ReadData" bits="32" alternativeStr="true">
+				<to name="ALUInp1" comp="Main ALU"/>
+			</output>
+			<output name="ReadData2" bits="32" alternativeStr="true">
+				<to name="in0ReadData" comp="Mux4"/>
+				<to name="Write Data" comp="Memory"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="ReadReg1" bits="5"/>
+			<input name="ReadReg2" bits="5"/>
+			<input name="WriteReg" bits="5"/>
+			<input name="WriteData" bits="32"/>
+			<input name="RegWrite" bits="1"/>
+		</inputBuses>
+		<operations>
+			<op name="ReadReg1">
+				<dependsOn which="always" if="always"/>
+				<do func="readreg">
+					<inputs>
+						<in name="ReadReg1"/>
+					</inputs>
+					<outputs>
+						<out name="ReadData"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="ReadReg2">
+				<dependsOn which="always" if="always"/>
+				<do func="readreg">
+					<inputs>
+						<in name="ReadReg2"/>
+					</inputs>
+					<outputs>
+						<out name="ReadData2"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="WriteData">
+				<dependsOn which="RegWrite" if="1"/>
+				<do func="writereg">
+					<inputs>
+						<in name="WriteReg"/>
+						<in name="WriteData"/>
+					</inputs>
+					<outputs>
+						<out name="ReadData2"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	
+	<Component>
+		<name>PC</name>
+		<description>Progam Counter</description>
+		<specialComponent comp="StartComp"/>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="PC" bits="32" alternativeStr="true">
+				<to name="PC" comp="ALUIncr"/>
+				<to name="PCAddress" comp="InstrMemory"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="newPC" bits="32"/>
+		</inputBuses>
+		<operations>
+			<op name="ReadReg1">
+				<dependsOn which="always" if="always"/>
+				<do func="mux">
+					<inputs>
+						<in name="newPC"/>
+					</inputs>
+					<outputs>
+						<out name="PC"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+
+	<Component>
+		<name>Spliter</name>
+		<description>Instruction Spliter</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="Opcode" bits="6">
+				<to name="InControl" comp="Control"/>
+			</output>
+			<output name="Rs" bits="5">
+				<to name="ReadReg1" comp="Registers"/>
+			</output>
+			<output name="Rt" bits="5">
+				<to name="ReadReg2" comp="Registers"/>
+				<to name="ReadReg2" comp="Mux1"/>
+			</output>
+			<output name="Rd" bits="5">
+				<to name="in1WriteReg" comp="Mux1"/>
+			</output>
+			<output name="Addr" bits="16">
+				<to name="Addr16bits" comp="SExtend"/>
+			</output>
+			<output name="Func" bits="6">
+				<to name="funcField" comp="ALUControl"/>
+			</output>
+			<output name="JmpImmediate" bits="26">
+				<to name="immediateField" comp="ShiftLeft2"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="Instr" bits="32"/>
+		</inputBuses>
+		<operations>
+			<op name="Opcode31-26">
+				<dependsOn which="always" if="always"/>
+				<do func="split" out="31-26">
+					<inputs>
+						<in name="Instr"/>
+					</inputs>
+					<outputs>
+						<out name="Opcode"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="Rs25-21">
+				<dependsOn which="always" if="always"/>
+				<do func="split" out="25-21">
+					<inputs>
+						<in name="Instr"/>
+					</inputs>
+					<outputs>
+						<out name="Rs"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="Rt20-16">
+				<dependsOn which="always" if="always"/>
+				<do func="split" out="20-16">
+					<inputs>
+						<in name="Instr"/>
+					</inputs>
+					<outputs>
+						<out name="Rt"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="Rd15-11">
+				<dependsOn which="always" if="always"/>
+				<do func="split" out="15-11">
+					<inputs>
+						<in name="Instr"/>
+					</inputs>
+					<outputs>
+						<out name="Rd"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="Addr15-0">
+				<dependsOn which="always" if="always"/>
+				<do func="split" out="15-0">
+					<inputs>
+						<in name="Instr"/>
+					</inputs>
+					<outputs>
+						<out name="Addr"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="Func31-26">
+				<dependsOn which="always" if="always"/>
+				<do func="split" out="5-0">
+					<inputs>
+						<in name="Instr"/>
+					</inputs>
+					<outputs>
+						<out name="Func"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="jmpimm25-0">
+				<dependsOn which="always" if="always"/>
+				<do func="split" out="25-0">
+					<inputs>
+						<in name="Instr"/>
+					</inputs>
+					<outputs>
+						<out name="JmpImmediate"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	
+	<Component>
+		<name>SExtend</name>
+		<description>Sign Extend</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="Addr32bits" bits="32" alternativeStr="true">
+				<to name="Addr" comp="ShiftLeft"/>
+				<to name="in1Const" comp="Mux4"/>				
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="Addr16bits" bits="16"/>
+		</inputBuses>
+		<operations>
+			<op name="SignExtend32">
+				<dependsOn which="always" if="always"/>
+				<do func="signextend" out="32">
+					<inputs>
+						<in name="Addr16bits"/>
+					</inputs>
+					<outputs>
+						<out name="Addr32bits"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	
+	<Component>
+		<name>ShiftLeft</name>
+		<description>Shift Left 2 (= inp * 4)</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="Addr*4" bits="32" alternativeStr="true">
+				<to name="AddressField" comp="ALUBranch"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="Addr" bits="32"/>
+		</inputBuses>
+		<operations>
+			<op name="ShiftLeft2">
+				<dependsOn which="always" if="always"/>
+				<do func="shiftleft" out="2">
+					<inputs>
+						<in name="Addr"/>
+					</inputs>
+					<outputs>
+						<out name="Addr*4"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+		
+	<Component>
+		<name>Out4</name>
+		<description>For incrementing PC by 4</description>
+		<hidden>true</hidden>
+		<outputBuses>
+			<output name="out4" bits="32">
+				<to name="Increm4" comp="ALUIncr"/>
+			</output>
+		</outputBuses>
+		<operations>
+			<op name="out4">
+				<dependsOn which="always" if="always"/>
+				<do func="out" out="100">
+					<outputs>
+						<out name="out4"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	
+	<Component>
+		<name>ALUIncr</name>
+		<description>Increment PC ALU</description>
+		<outputBuses>
+			<output name="PC+4" bits="32">
+				<to name="PC+4" comp="ALUBranch"/>
+				<to name="in0PCIncrem" comp="Mux2"/>
+				<to name="PC+4" comp="Split2"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="Increm4" bits="32"/>
+			<input name="PC" bits="32"/>			
+		</inputBuses>
+		<operations>
+			<op name="increm4">
+				<dependsOn which="always" if="always"/>
+				<do func="add">
+					<inputs>
+						<in name="Increm4"/>
+						<in name="PC"/>
+					</inputs>
+					<outputs>
+						<out name="PC+4"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+
+	<Component>
+		<name>ShiftLeft2</name>
+		<description>inp * 4 - addr is now word aligned</description>
+		<hidden>false</hidden>
+		<outputBuses>
+			<output name="Addr*4" bits="28">
+				<to name="Addr*4" comp="Join"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="immediateField" bits="26"/>		
+		</inputBuses>
+		<operations>
+			<op name="ShiftLeft2">
+				<dependsOn which="always" if="always"/>
+				<do func="shiftleft" out="2">
+					<inputs>
+						<in name="immediateField"/>
+					</inputs>
+					<outputs>
+						<out name="Addr*4"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+
+	<Component>
+		<name>Split2</name>
+		<description>Split off the 4 most significant bits</description>
+		<outputBuses>
+			<output name="Top4bits" bits="4">
+				<to name="Top4bits" comp="Join"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="PC+4" bits="32"/>		
+		</inputBuses>
+		<operations>
+			<op name="top4bits">
+				<dependsOn which="always" if="always"/>
+				<do func="split" out="31-28">
+					<inputs>
+						<in name="PC+4"/>
+					</inputs>
+					<outputs>
+						<out name="Top4bits"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+	<Component>
+		<name>Join</name>
+		<description>Join 2 input buses</description>
+		<outputBuses>
+			<output name="JmpAddr" bits="32">
+				<to name="JmpAddr" comp="Mux5"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="Top4bits" bits="4"/>
+			<input name="Addr*4" bits="28"/>	
+		</inputBuses>
+		<operations>
+			<op name="join">
+				<dependsOn which="always" if="always"/>
+				<do func="join">
+					<inputs>
+						<in name="Top4bits"/> <!--will join in order... Top4bits + Addr*4-->
+						<in name="Addr*4"/>
+					</inputs>
+					<outputs>
+						<out name="JmpAddr"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+
+	<Component>
+		<name>Mux5</name>
+		<description>Multiplexor Jump or (beq | PC+4)</description>
+		<outputBuses>
+			<output name="newPC" bits="32" alternativeStr="true">
+				<to name="newPC" comp="PC"/>
+			</output>
+		</outputBuses>
+		<inputBuses>
+			<input name="newPC" bits="32"/>
+			<input name="JmpAddr" bits="32"/>
+			<input name="Jump" bits="1"/>
+		</inputBuses>
+		<operations>
+			<op name="beqOrpc+4">
+				<dependsOn which="Jump" if="0"/>
+				<do func="mux">
+					<inputs>
+						<in name="newPC"/>
+					</inputs>
+					<outputs>
+						<out name="newPC"/>
+					</outputs>
+				</do>
+			</op>
+			<op name="jump">
+				<dependsOn which="Jump" if="1"/>
+				<do func="mux">
+					<inputs>
+						<in name="JmpAddr"/>
+					</inputs>
+					<outputs>
+						<out name="newPC"/>
+					</outputs>
+				</do>
+			</op>
+		</operations>
+	</Component>
+
+</Simulator>

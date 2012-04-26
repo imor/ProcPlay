@@ -5,7 +5,7 @@ article {
 	margin-top: 3em;
 }
 
-h1 {
+article h1 {
 	text-align: center;
 	display: inline;
 	/*background-color: red;*/
@@ -14,6 +14,12 @@ h1 {
 	font: 2em Rationale, sans-serif;
 	padding: 1em;
 	text-shadow: 0.05em 0.06em 0.1em grey;
+}
+
+#schematic {
+	display: block;
+	margin-left: auto;
+	margin-right: auto;
 }
 
 footer {

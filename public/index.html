@@ -3,10 +3,27 @@
 <head>
 	<link rel="stylesheet" type="text/css" href="http://fonts.googleapis.com/css?family=Rationale">
 	<link rel="stylesheet" type="text/css" href="default.css">
+	<script type="text/javascript" src="http://code.createjs.com/easeljs-0.4.2.min.js"></script>
+	<script type="text/javascript" src="http://jscdn.net/raphael.js"></script>
+	<script type="text/javascript" src="http://code.jquery.com/jquery.min.js"></script>
+	<script type="text/javascript" src="../lib/paper.js"></script>
+	
+	<script type="text/paperscript" canvas="schematic">
+		var topLeft = new Point(88, 75);
+		var size = new Size(400, 75);
+		var path = new Path.Rectangle(topLeft, size);
+		path.strokeColor = 'black';
+		path.fillColor = 'grey';
+		
+    </script>
 </head>
 <body>
 	<header></header>
-	<article><h1>Processor emulation. Coming soon!</h1></article>
+	<article>
+		<h1>Processor emulation. Coming soon!</h1>
+		<canvas id="schematic" width="578" height="200">
+		</canvas>
+	</article>
 	<footer>All rights reserved. BTI Corp.</footer>
 </body>
 </html>

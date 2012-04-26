@@ -1,0 +1,25 @@
+article {
+	text-align: center;
+	margin-left: auto;
+	margin-right: auto;
+	margin-top: 3em;
+}
+
+h1 {
+	text-align: center;
+	display: inline;
+	/*background-color: red;*/
+	margin-left: auto;
+	margin-right: auto;
+	font: 2em Rationale, sans-serif;
+	padding: 1em;
+	text-shadow: 0.05em 0.06em 0.1em grey;
+}
+
+footer {
+	text-align: center;
+	margin-top: 5em;
+	margin-left: auto;
+	margin-right: auto;
+	font: 60% "Lucida Grande", "Trebuchet MS", Verdana, sans-serif;
+}

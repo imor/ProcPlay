@@ -9,19 +9,24 @@
 	<script type="text/javascript" src="../lib/paper.js"></script>
 	
 	<script type="text/paperscript" canvas="schematic">
-		var topLeft = new Point(88, 75);
-		var size = new Size(400, 75);
-		var path = new Path.Rectangle(topLeft, size);
-		path.strokeColor = 'black';
-		path.fillColor = 'grey';
-		
+		var baseSize = new Size(200, 200);
+		var baseTopLeft = new Point(view.center.x - baseSize.width / 2, view.center.y);
+		var base = new Path.Rectangle(baseTopLeft , baseSize);
+		base.fillColor = '#3c3c3c';
+
+
+		var raisedSurfaceSize = new Size(140, 140);
+		var raisedSurfaceTopLeft = new Point(view.center.x - raisedSurfaceSize.width / 2, view.center.y);
+		var raisedSurface = new Path.Rectangle(raisedSurfaceTopLeft , raisedSurfaceSize);
+		raisedSurface.fillColor = '#004c00';
+
     </script>
 </head>
 <body>
 	<header></header>
 	<article>
 		<h1>Processor emulation. Coming soon!</h1>
-		<canvas id="schematic" width="578" height="200">
+		<canvas id="schematic" width="300" height="300">
 		</canvas>
 	</article>
 	<footer>All rights reserved. BTI Corp.</footer>
